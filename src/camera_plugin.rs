@@ -5,6 +5,8 @@ use bevy::{
     prelude::*,
 };
 
+use crate::world_direction::WorldDirection;
+
 const FOCUS_DEFAULTS: Vec3 = Vec3::new(3.0, 1.0, 3.0);
 
 #[derive(Debug, Resource)]
@@ -24,17 +26,22 @@ pub struct CameraSettings {
     pub orbit_rotate_sensitivity: f32,
 }
 
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CameraSystems {
+    UpdateState,
+}
+
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(CameraSettings {
+        let camera_settings = CameraSettings {
             zoom: 1.0,
             target_zoom: 1.0,
             zoom_speed: 0.05,
             zoom_smoothness: 12.0,
-            min_distance: 3.0,
-            max_distance: 12.0,
+            min_distance: 6.0,
+            max_distance: 20.0,
             min_elevation: PI / 15.0,
             max_elevation: PI / 2.0 - 0.05,
             focus: FOCUS_DEFAULTS,
@@ -42,8 +49,17 @@ impl Plugin for CameraPlugin {
             move_speed_zoomed_out: 9.0,
             orbit_yaw: PI / 4.0,
             orbit_rotate_sensitivity: 0.01,
-        })
-        .add_systems(Update, (rotate_horizontal, move_focus, zoom));
+        };
+        let world_direction = WorldDirection::from_orbit_yaw(camera_settings.orbit_yaw);
+
+        app.insert_resource(camera_settings)
+            .insert_resource(world_direction)
+            .add_systems(
+                Update,
+                (rotate_horizontal, move_focus, zoom, sync_world_direction)
+                    .chain()
+                    .in_set(CameraSystems::UpdateState),
+            );
     }
 }
 
@@ -82,10 +98,16 @@ fn move_focus(
     let right = Vec3::new(-forward.z, 0.0, forward.x).normalize();
 
     let movement = (forward * input.y + right * input.x).normalize_or_zero();
-
+    let speed_multiplier =
+        if keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight) {
+            3.0
+        } else {
+            1.0
+        };
     let t = camera_settings.zoom.clamp(0.0, 1.0);
-    let movement_speed = camera_settings.move_speed_zoomed_out
-        + (camera_settings.move_speed_zoomed_in - camera_settings.move_speed_zoomed_out) * t;
+    let movement_speed = (camera_settings.move_speed_zoomed_out
+        + (camera_settings.move_speed_zoomed_in - camera_settings.move_speed_zoomed_out) * t)
+        * speed_multiplier;
 
     camera_settings.focus += movement * movement_speed * time.delta_secs();
     camera_settings.focus.y = FOCUS_DEFAULTS.y;
@@ -144,4 +166,11 @@ fn rotate_horizontal(
         return;
     }
     camera_settings.orbit_yaw += delta_x * camera_settings.orbit_rotate_sensitivity;
+}
+
+fn sync_world_direction(
+    camera_settings: Res<CameraSettings>,
+    mut world_direction: ResMut<WorldDirection>,
+) {
+    world_direction.set_heading_from_orbit_yaw(camera_settings.orbit_yaw);
 }
