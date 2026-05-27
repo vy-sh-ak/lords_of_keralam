@@ -31,13 +31,13 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     terrain::spawn_chunk_tiles(&mut commands, &chunk, tile_scene);
 
-    let hut_scene = asset_server.load(GltfAssetLabel::Scene(0).from_asset("hut.glb"));
-    terrain::spawn_hut_at_tile(
-        &mut commands,
-        &chunk,
-        terrain::TileCoord::new(3, 3),
-        hut_scene,
-    );
+    // let hut_scene = asset_server.load(GltfAssetLabel::Scene(0).from_asset("hut.glb"));
+    // terrain::spawn_hut_at_tile(
+    //     &mut commands,
+    //     &chunk,
+    //     terrain::TileCoord::new(3, 3),
+    //     hut_scene,
+    // );
     commands.insert_resource(chunk);
     // light
     commands.spawn((
