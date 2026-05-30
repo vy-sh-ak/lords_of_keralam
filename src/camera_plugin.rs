@@ -8,6 +8,7 @@ use bevy::{
 use crate::world_direction::WorldDirection;
 
 const FOCUS_DEFAULTS: Vec3 = Vec3::new(3.0, 1.0, 3.0);
+const DEFAULT_ORBIT_PITCH: f32 = 0.0;
 
 #[derive(Debug, Resource)]
 pub struct CameraSettings {
@@ -23,7 +24,9 @@ pub struct CameraSettings {
     pub move_speed_zoomed_in: f32,
     pub move_speed_zoomed_out: f32,
     pub orbit_yaw: f32,
+    pub orbit_pitch: f32,
     pub orbit_rotate_sensitivity: f32,
+    pub vertical_rotate_sensitivity: f32,
 }
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -41,14 +44,16 @@ impl Plugin for CameraPlugin {
             zoom_speed: 0.05,
             zoom_smoothness: 12.0,
             min_distance: 6.0,
-            max_distance: 20.0,
-            min_elevation: PI / 15.0,
+            max_distance: 50.0,
+            min_elevation: 0.0,
             max_elevation: PI / 2.0 - 0.05,
             focus: FOCUS_DEFAULTS,
-            move_speed_zoomed_in: 3.0,
-            move_speed_zoomed_out: 9.0,
+            move_speed_zoomed_in: 10.0,
+            move_speed_zoomed_out: 40.0,
             orbit_yaw: PI / 4.0,
+            orbit_pitch: DEFAULT_ORBIT_PITCH,
             orbit_rotate_sensitivity: 0.01,
+            vertical_rotate_sensitivity: 0.02,
         };
         let world_direction = WorldDirection::from_orbit_yaw(camera_settings.orbit_yaw);
 
@@ -56,7 +61,12 @@ impl Plugin for CameraPlugin {
             .insert_resource(world_direction)
             .add_systems(
                 Update,
-                (rotate_horizontal, move_focus, zoom, sync_world_direction)
+                (
+                    (rotate_horizontal, rotate_vertical).chain(),
+                    move_focus,
+                    zoom,
+                    sync_world_direction,
+                )
                     .chain()
                     .in_set(CameraSystems::UpdateState),
             );
@@ -128,18 +138,30 @@ fn zoom(
     if (camera_settings.target_zoom - camera_settings.zoom).abs() < 0.001 {
         camera_settings.zoom = camera_settings.target_zoom;
     }
+    if camera_settings.target_zoom == 0.0 {
+        let pitch_reset_alpha = 1.0 - (-8.0 * time.delta_secs()).exp();
+        camera_settings.orbit_pitch +=
+            (DEFAULT_ORBIT_PITCH - camera_settings.orbit_pitch) * pitch_reset_alpha;
+
+        if (camera_settings.orbit_pitch - DEFAULT_ORBIT_PITCH).abs() < 0.001 {
+            camera_settings.orbit_pitch = DEFAULT_ORBIT_PITCH;
+        }
+    }
 
     let t = camera_settings.zoom;
-    let elevation = camera_settings.max_elevation
+    let base_pitch = camera_settings.max_elevation
         + (camera_settings.min_elevation - camera_settings.max_elevation) * t;
+
+    let pitch =
+        (base_pitch + camera_settings.orbit_pitch).clamp(-0.2, camera_settings.max_elevation);
 
     let distance = camera_settings.max_distance
         + (camera_settings.min_distance - camera_settings.max_distance) * t;
 
-    let horizontal_dist = distance * elevation.cos();
-    let height = distance * elevation.sin();
+    let horizontal_dist = distance * pitch.cos();
+    let height = distance * pitch.sin();
 
-    let direction = Vec3::new(
+    let yaw_direction = Vec3::new(
         camera_settings.orbit_yaw.cos(),
         0.0,
         camera_settings.orbit_yaw.sin(),
@@ -149,7 +171,7 @@ fn zoom(
     let target = camera_settings.focus;
 
     let mut transform = camera.into_inner();
-    transform.translation = target + direction * horizontal_dist + Vec3::Y * height;
+    transform.translation = target + yaw_direction * horizontal_dist + Vec3::Y * height;
     transform.look_at(target, Vec3::Y);
 }
 
@@ -166,6 +188,24 @@ fn rotate_horizontal(
         return;
     }
     camera_settings.orbit_yaw += delta_x * camera_settings.orbit_rotate_sensitivity;
+}
+
+fn rotate_vertical(
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    mut camera_settings: ResMut<CameraSettings>,
+) {
+    if !mouse_buttons.pressed(MouseButton::Middle) {
+        return;
+    }
+    let delta_y = mouse_motion.delta.y;
+    if delta_y == 0.0 || camera_settings.target_zoom < 1.0 {
+        return;
+    }
+
+    camera_settings.orbit_pitch = (camera_settings.orbit_pitch
+        + delta_y * camera_settings.vertical_rotate_sensitivity)
+        .clamp(-0.1, 1.0);
 }
 
 fn sync_world_direction(

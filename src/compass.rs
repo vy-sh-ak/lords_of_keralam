@@ -12,11 +12,11 @@ pub fn spawn_compass(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
         .spawn((
             Node {
-                width: Val::Px(60.0),
-                height: Val::Px(60.0),
+                width: Val::Px(50.0),
+                height: Val::Px(50.0),
                 position_type: PositionType::Absolute,
-                right: Val::Px(16.0),
-                top: Val::Px(16.0),
+                right: Val::Px(12.0),
+                top: Val::Px(12.0),
                 ..default()
             },
             CompassMarker,
