@@ -7,7 +7,7 @@ use bevy::{
 
 use crate::world_direction::WorldDirection;
 
-const FOCUS_DEFAULTS: Vec3 = Vec3::new(3.0, 1.0, 3.0);
+const FOCUS_DEFAULTS: Vec3 = Vec3::new(3.0, 6.0, 3.0);
 const DEFAULT_ORBIT_PITCH: f32 = 0.0;
 
 #[derive(Debug, Resource)]
@@ -44,12 +44,12 @@ impl Plugin for CameraPlugin {
             zoom_speed: 0.05,
             zoom_smoothness: 12.0,
             min_distance: 6.0,
-            max_distance: 50.0,
+            max_distance: 500.0,
             min_elevation: 0.0,
             max_elevation: PI / 2.0 - 0.05,
             focus: FOCUS_DEFAULTS,
             move_speed_zoomed_in: 10.0,
-            move_speed_zoomed_out: 40.0,
+            move_speed_zoomed_out: 200.0,
             orbit_yaw: PI / 4.0,
             orbit_pitch: DEFAULT_ORBIT_PITCH,
             orbit_rotate_sensitivity: 0.01,

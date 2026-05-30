@@ -1,96 +1,78 @@
-use bevy::prelude::*;
+use std::sync::Arc;
 
-const TILE_SIZE: f32 = 4.0;
-const CHUNK_SIZE: usize = 12;
+use bevy::{platform::collections::HashMap, prelude::*};
+use bevy_voxel_world::prelude::*;
+use noise::{HybridMulti, NoiseFn, Perlin};
 
-#[derive(Clone, Copy)]
-pub struct Tile {
-    pub height: f32,
-}
-#[derive(Resource)]
-pub struct Chunk {
-    pub tiles: Vec<Tile>,
-}
+pub const CAMERA_VEC3: Vec3 = Vec3::new(-200.0, 180.0, -200.0);
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TileCoord {
-    pub x: usize,
-    pub z: usize,
-}
+#[derive(Resource, Clone, Default)]
+pub struct MainWorld;
 
-impl TileCoord {
-    pub const fn new(x: usize, z: usize) -> Self {
-        Self { x, z }
+impl VoxelWorldConfig for MainWorld {
+    type MaterialIndex = u8;
+    type ChunkUserBundle = ();
+
+    fn spawning_distance(&self) -> u32 {
+        25
+    }
+
+    fn min_despawn_distance(&self) -> u32 {
+        1
+    }
+
+    fn voxel_lookup_delegate(&self) -> VoxelLookupDelegate<Self::MaterialIndex> {
+        Box::new(move |_chunk_pos, _lod, _previous| get_voxel_fn())
+    }
+
+    fn texture_index_mapper(&self) -> Arc<dyn Fn(Self::MaterialIndex) -> [u32; 3] + Send + Sync> {
+        Arc::new(|mat| match mat {
+            0 => [0, 0, 0],
+            1 => [1, 1, 1],
+            2 => [2, 2, 2],
+            3 => [3, 3, 3],
+            _ => [0, 0, 0],
+        })
     }
 }
 
-impl Chunk {
-    fn index(coord: TileCoord) -> Option<usize> {
-        if coord.x >= CHUNK_SIZE || coord.z >= CHUNK_SIZE {
-            return None;
+fn get_voxel_fn() -> Box<dyn FnMut(IVec3, Option<WorldVoxel>) -> WorldVoxel + Send + Sync> {
+    // Set up some noise to use as the terrain height map
+    let mut noise = HybridMulti::<Perlin>::new(1234);
+    noise.octaves = 5;
+    noise.frequency = 1.1;
+    noise.lacunarity = 2.8;
+    noise.persistence = 0.4;
+
+    // We use this to cache the noise value for each y column so we only need
+    // to calculate it once per x/z coordinate
+    let mut cache = HashMap::<(i32, i32), f64>::new();
+
+    // Then we return this boxed closure that captures the noise and the cache
+    // This will get sent off to a separate thread for meshing by bevy_voxel_world
+    Box::new(move |pos: IVec3, _previous| {
+        // Sea level
+        if pos.y < 1 {
+            return WorldVoxel::Solid(3);
         }
-        Some(coord.z * CHUNK_SIZE + coord.x)
-    }
 
-    pub fn tile(&self, coord: TileCoord) -> Option<&Tile> {
-        let index = Self::index(coord)?;
-        self.tiles.get(index)
-    }
+        let [x, y, z] = pos.as_dvec3().to_array();
 
-    pub fn tile_to_world(&self, coord: TileCoord) -> Option<Vec3> {
-        let tile = self.tile(coord)?;
+        // If y is less than the noise sample, we will set the voxel to solid
+        let is_ground = y < match cache.get(&(pos.x, pos.z)) {
+            Some(sample) => *sample,
+            None => {
+                let sample = noise.get([x / 1000.0, z / 1000.0]) * 50.0;
+                cache.insert((pos.x, pos.z), sample);
+                sample
+            }
+        };
 
-        Some(Vec3::new(
-            coord.x as f32 * TILE_SIZE,
-            tile.height,
-            coord.z as f32 * TILE_SIZE,
-        ))
-    }
-}
-
-pub fn generate_chunk() -> Chunk {
-    let mut tiles = Vec::with_capacity(CHUNK_SIZE * CHUNK_SIZE);
-
-    for _ in 0..(CHUNK_SIZE * CHUNK_SIZE) {
-        tiles.push(Tile { height: 0.0 });
-    }
-
-    Chunk { tiles }
-}
-
-pub fn spawn_chunk_tiles(commands: &mut Commands, chunk: &Chunk, tile_scene: Handle<Scene>) {
-    for z in 0..CHUNK_SIZE {
-        for x in 0..CHUNK_SIZE {
-            let coord = TileCoord::new(x, z);
-            let world = chunk
-                .tile_to_world(coord)
-                .expect("generated tile coordinate should always be valid");
-
-            commands.spawn((
-                Name::new(format!("Tile {x},{z}")),
-                coord,
-                SceneRoot(tile_scene.clone()),
-                Transform::from_translation(world).with_scale(Vec3::splat(1.05)),
-            ));
+        if is_ground {
+            // Solid voxel of material type 0
+            WorldVoxel::Solid(0)
+        } else {
+            WorldVoxel::Air
         }
-    }
-}
-
-pub fn spawn_hut_at_tile(
-    commands: &mut Commands,
-    chunk: &Chunk,
-    coord: TileCoord,
-    hut_scene: Handle<Scene>,
-) -> Option<Entity> {
-    let world = chunk.tile_to_world(coord)?;
-    Some(
-        commands
-            .spawn((
-                Name::new(format!("Hut {},{}", coord.x, coord.z)),
-                coord,
-                SceneRoot(hut_scene),
-                Transform::from_translation(world).with_scale(Vec3::splat(4.0)),
-            ))
-            .id(),
-    )
+    })
 }
