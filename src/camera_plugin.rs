@@ -171,8 +171,13 @@ fn zoom(
     let target = camera_settings.focus;
 
     let mut transform = camera.into_inner();
-    transform.translation = target + yaw_direction * horizontal_dist + Vec3::Y * height;
-    transform.look_at(target, Vec3::Y);
+    let new_translation = target + yaw_direction * horizontal_dist + Vec3::Y * height;
+    let translation_changed = transform.translation.distance_squared(new_translation) > 0.0001;
+
+    if translation_changed {
+        transform.translation = new_translation;
+        transform.look_at(target, Vec3::Y);
+    }
 }
 
 fn rotate_horizontal(
