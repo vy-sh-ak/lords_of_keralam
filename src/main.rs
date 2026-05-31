@@ -13,6 +13,7 @@ fn main() {
     App::new()
         .add_plugins((DefaultPlugins, FrameTimeDiagnosticsPlugin::default()))
         .add_plugins(VoxelWorldPlugin::with_config(terrain::MainWorld::default()))
+        .add_plugins(terrain::terrain_mesh::SmoothTerrainPlugin)
         .add_plugins(camera_plugin::CameraPlugin)
         .add_systems(Startup, setup)
         .add_systems(
