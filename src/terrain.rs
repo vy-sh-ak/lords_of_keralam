@@ -1,5 +1,6 @@
-pub mod voxel_terrain;
-pub mod terrain_mesh;
-
-pub use voxel_terrain::*;
-pub use terrain_mesh::*;
+pub mod regular_grid_plugin;
+pub mod perlin_map;
+pub mod map_controls;
+pub use regular_grid_plugin::*;
+pub use perlin_map::*;
+pub use map_controls::*;

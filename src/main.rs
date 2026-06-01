@@ -1,31 +1,35 @@
 use bevy::{
     diagnostic::FrameTimeDiagnosticsPlugin, light::CascadeShadowConfigBuilder, prelude::*,
-    text::DEFAULT_FONT_DATA,
+    math::primitives::Plane3d,
 };
 use bevy_voxel_world::{custom_meshing::CHUNK_SIZE_F, prelude::*};
 
 mod camera_plugin;
 mod compass;
-mod terrain;
 mod world_direction;
+
+mod terrain;
 
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, FrameTimeDiagnosticsPlugin::default()))
-        .add_plugins(VoxelWorldPlugin::with_config(terrain::MainWorld::default()))
-        .add_plugins(terrain::terrain_mesh::SmoothTerrainPlugin)
         .add_plugins(camera_plugin::CameraPlugin)
+        .add_plugins(terrain::PerlinMapPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (
                 compass::update_compass_system.after(camera_plugin::CameraSystems::UpdateState),
-                terrain::update_fps_text,
             ),
         )
         .run();
 }
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut fonts: ResMut<Assets<Font>>) {
+fn setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     commands.spawn((
         Name::new("Camera"),
         Camera3d::default(),
@@ -34,22 +38,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut fonts: ResM
             ..default()
         },
         Projection::from(PerspectiveProjection::default()),
-        Transform::from_xyz(
-            terrain::CAMERA_VEC3.x,
-            terrain::CAMERA_VEC3.y,
-            terrain::CAMERA_VEC3.z,
-        )
-        .looking_at(Vec3::ZERO, Vec3::Y),
-        // This tells bevy_voxel_world to use this cameras transform to calculate spawning area
-        VoxelWorldCamera::<terrain::MainWorld>::default(),
-        DistanceFog {
-            color: *ClearColor::default(),
-            falloff: FogFalloff::Linear {
-                start: 125.0 * CHUNK_SIZE_F,
-                end: 200.0 * CHUNK_SIZE_F,
-            },
-            ..default()
-        },
+        Transform::from_xyz(0.0, 2.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
     // Sun
@@ -76,32 +65,25 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut fonts: ResM
         affects_lightmapped_meshes: true,
     });
 
-    // UI overlay camera
+   
+
+    // let font = fonts.add(Font::try_from_bytes(DEFAULT_FONT_DATA.to_vec()).unwrap());
     // commands.spawn((
-    //     Camera2d,
-    //     Camera {
-    //         order: 1,
+    //     Text::new("FPS: -- (--)\nFrame: -- ms"),
+    //     TextFont {
+    //         font,
+    //         font_size: 18.0,
     //         ..default()
     //     },
+    //     TextColor(Color::WHITE),
+    //     Node {
+    //         position_type: PositionType::Absolute,
+    //         left: Val::Px(12.0),
+    //         top: Val::Px(12.0),
+    //         ..default()
+    //     },
+    //     terrain::FpsText,
     // ));
-
-    let font = fonts.add(Font::try_from_bytes(DEFAULT_FONT_DATA.to_vec()).unwrap());
-    commands.spawn((
-        Text::new("FPS: -- (--)\nFrame: -- ms"),
-        TextFont {
-            font,
-            font_size: 18.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(12.0),
-            top: Val::Px(12.0),
-            ..default()
-        },
-        terrain::FpsText,
-    ));
 
     compass::spawn_compass(commands, asset_server);
 }

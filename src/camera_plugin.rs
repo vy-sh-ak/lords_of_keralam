@@ -40,7 +40,7 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         let camera_settings = CameraSettings {
             zoom: 1.0,
-            target_zoom: 1.0,
+            target_zoom: 0.0,
             zoom_speed: 0.05,
             zoom_smoothness: 12.0,
             min_distance: 6.0,
