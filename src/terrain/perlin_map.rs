@@ -1,10 +1,11 @@
+use crate::terrain::MapControlsPlugin;
 use bevy::{
     asset::RenderAssetUsages,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use noise::{NoiseFn, Perlin};
-use crate::terrain::MapControlsPlugin;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 pub struct PerlinMapPlugin;
 
@@ -16,6 +17,13 @@ pub struct MapConfigs {
     pub height: u32,
     pub width: u32,
     pub scale: f64,
+    pub octaves: u32,
+    pub persistence: f64,
+    pub lacunarity: f64,
+    pub frequency: f64,
+    pub seed: u32,
+    pub offset_x: f64,
+    pub offset_y: f64,
 }
 
 impl Plugin for PerlinMapPlugin {
@@ -24,35 +32,38 @@ impl Plugin for PerlinMapPlugin {
             height: 100,
             width: 100,
             scale: 4.0,
+            octaves: 5,
+            persistence: 0.4,
+            lacunarity: 2.8,
+            frequency: 1.0,
+            seed: 0,
+            offset_x: 0.0,
+            offset_y: 0.0,
         })
         .add_plugins(MapControlsPlugin)
         .add_systems(Startup, setup_noise_plane)
-        .add_systems(Update, refresh_noise_plane.run_if(resource_changed::<MapConfigs>));
+        .add_systems(
+            Update,
+            refresh_noise_plane.run_if(resource_changed::<MapConfigs>),
+        );
     }
 }
 
 fn create_noise_texture(map_configs: &MapConfigs) -> Image {
     let width = map_configs.width;
     let height = map_configs.height;
-    let scale = map_configs.scale.max(0.001);
 
-    let mut texture_data = Vec::with_capacity((width * height * 4) as usize);
-    let perlin = Perlin::default();
+    let noise_map = generate_noise_map(map_configs);
 
-    for y in 0..height {
-        for x in 0..width {
-            let sample_x = x as f64 / scale;
-            let sample_y = y as f64 / scale;
+    let mut texture_data = Vec::with_capacity(noise_map.len() * 4);
 
-            let noise_val = perlin.get([sample_x, sample_y]);
-            let normalized_val = (noise_val + 1.0) / 2.0;
-            let color_byte = (normalized_val * 255.0) as u8;
+    for noise_value in noise_map {
+        let color_byte = (noise_value.clamp(0.0, 1.0) * 255.0) as u8;
 
-            texture_data.push(color_byte);
-            texture_data.push(color_byte);
-            texture_data.push(color_byte);
-            texture_data.push(255);
-        }
+        texture_data.push(color_byte);
+        texture_data.push(color_byte);
+        texture_data.push(color_byte);
+        texture_data.push(255);
     }
 
     Image::new(
@@ -68,6 +79,68 @@ fn create_noise_texture(map_configs: &MapConfigs) -> Image {
     )
 }
 
+fn generate_noise_map(map_configs: &MapConfigs) -> Vec<f64> {
+    let width = map_configs.width as usize;
+    let height = map_configs.height as usize;
+    let scale = map_configs.scale.max(0.0001);
+    let octaves = map_configs.octaves.max(1) as usize;
+    let half_width = map_configs.width as f64 / 2.0;
+    let half_height = map_configs.height as f64 / 2.0;
+    let perlin = Perlin::new(0);
+    let octave_offsets = build_octave_offsets(map_configs, octaves);
+
+    let mut noise_map = vec![0.0; width * height];
+    let mut max_noise_height = f64::NEG_INFINITY;
+    let mut min_noise_height = f64::INFINITY;
+
+    for y in 0..height {
+        for x in 0..width {
+            let mut amplitude = 1.0;
+            let mut frequency = map_configs.frequency.max(0.0001);
+            let mut noise_height = 0.0;
+
+            for &(offset_x, offset_y) in &octave_offsets {
+                let sample_x = ((x as f64 - half_width) / scale) * frequency + offset_x;
+                let sample_y = ((y as f64 - half_height) / scale) * frequency + offset_y;
+
+                let perlin_value = perlin.get([sample_x, sample_y]);
+                noise_height += perlin_value * amplitude;
+
+                amplitude *= map_configs.persistence;
+                frequency *= map_configs.lacunarity;
+            }
+
+            max_noise_height = max_noise_height.max(noise_height);
+            min_noise_height = min_noise_height.min(noise_height);
+            noise_map[y * width + x] = noise_height;
+        }
+    }
+
+    let noise_range = max_noise_height - min_noise_height;
+    for value in &mut noise_map {
+        *value = if noise_range.abs() <= f64::EPSILON {
+            0.0
+        } else {
+            ((*value - min_noise_height) / noise_range).clamp(0.0, 1.0)
+        };
+    }
+
+    noise_map
+}
+
+fn build_octave_offsets(map_configs: &MapConfigs, octaves: usize) -> Vec<(f64, f64)> {
+    let mut rng = StdRng::seed_from_u64(map_configs.seed as u64);
+
+    (0..octaves)
+        .map(|_| {
+            (
+                rng.random_range(-100_000.0..100_000.0) + map_configs.offset_x,
+                rng.random_range(-100_000.0..100_000.0) + map_configs.offset_y,
+            )
+        })
+        .collect()
+}
+
 fn setup_noise_plane(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -80,11 +153,13 @@ fn setup_noise_plane(
     commands.spawn((
         GroundPlane,
         Name::new("GroundPlane"),
-        Mesh3d(meshes.add(
-            Plane3d::default()
-                .mesh()
-                .size(map_configs.width as f32, map_configs.height as f32),
-        )),
+        Mesh3d(
+            meshes.add(
+                Plane3d::default()
+                    .mesh()
+                    .size(map_configs.width as f32, map_configs.height as f32),
+            ),
+        ),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color_texture: Some(texture_handle),
             perceptual_roughness: 1.0,
@@ -108,11 +183,13 @@ fn refresh_noise_plane(
         return;
     };
 
-    *mesh_handle = Mesh3d(meshes.add(
-        Plane3d::default()
-            .mesh()
-            .size(map_configs.width as f32, map_configs.height as f32),
-    ));
+    *mesh_handle = Mesh3d(
+        meshes.add(
+            Plane3d::default()
+                .mesh()
+                .size(map_configs.width as f32, map_configs.height as f32),
+        ),
+    );
 
     *material_handle = MeshMaterial3d(materials.add(StandardMaterial {
         base_color_texture: Some(images.add(create_noise_texture(&map_configs))),

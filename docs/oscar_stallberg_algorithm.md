@@ -50,3 +50,11 @@ Would you like to explore a simplified Python code example of how WFC constraint
    - **Dissolving Edges:** Edges are randomly dissolved to turn pairs of triangles into quads.
    - **Subdivision:** Remaining triangles are divided into quads, and then each quad is divided into four smaller ones to ensure a pure-quad mesh.
    - **Relaxation:** A relaxation algorithm is applied to iteratively adjust point positions so they are equally distant from their neighbors, resulting in a smooth, organic, "wave-like" grid that can be tiled infinitely.
+
+
+
+my technique should be the combination:
+
+- Procedural Generation
+- Marching cubes
+- Shading

@@ -16,6 +16,18 @@ enum MapSettingsButton {
     WidthDec,
     ScaleInc,
     ScaleDec,
+    SeedInc,
+    SeedDec,
+    OffsetXInc,
+    OffsetXDec,
+    OffsetYInc,
+    OffsetYDec,
+    PersistenceInc,
+    PersistenceDec,
+    LacunarityInc,
+    LacunarityDec,
+    FrequencyInc,
+    FrequencyDec,
 }
 
 #[derive(Component, PartialEq, Clone, Copy, Eq, Debug)]
@@ -23,6 +35,12 @@ enum MapSettingsType {
     Height,
     Width,
     Scale,
+    Seed,
+    OffsetX,
+    OffsetY,
+    Persistence,
+    Lacunarity,
+    Frequency,
 }
 
 impl MapSettingsType {
@@ -31,6 +49,12 @@ impl MapSettingsType {
             MapSettingsType::Height => "Height",
             MapSettingsType::Width => "Width",
             MapSettingsType::Scale => "Scale",
+            MapSettingsType::Seed => "Seed",
+            MapSettingsType::OffsetX => "Offset X",
+            MapSettingsType::OffsetY => "Offset Y",
+            MapSettingsType::Persistence => "Persistence",
+            MapSettingsType::Lacunarity => "Lacunarity",
+            MapSettingsType::Frequency => "Frequency",
         }
     }
 }
@@ -74,7 +98,7 @@ fn setup_controls(
                 position_type: PositionType::Absolute,
                 left: px(24),
                 bottom: px(24),
-                width: px(270),
+                width: px(360),
                 padding: UiRect::all(px(16)),
                 border_radius: BorderRadius::all(px(12)),
                 ..default()
@@ -103,6 +127,48 @@ fn setup_controls(
                 MapSettingsButton::ScaleDec,
                 MapSettingsButton::ScaleInc,
                 setting_value(&map_configs, MapSettingsType::Scale),
+                font.clone()
+            ),
+            build_settings_row(
+                MapSettingsType::Seed,
+                MapSettingsButton::SeedDec,
+                MapSettingsButton::SeedInc,
+                setting_value(&map_configs, MapSettingsType::Seed),
+                font.clone()
+            ),
+            build_settings_row(
+                MapSettingsType::OffsetX,
+                MapSettingsButton::OffsetXDec,
+                MapSettingsButton::OffsetXInc,
+                setting_value(&map_configs, MapSettingsType::OffsetX),
+                font.clone()
+            ),
+            build_settings_row(
+                MapSettingsType::OffsetY,
+                MapSettingsButton::OffsetYDec,
+                MapSettingsButton::OffsetYInc,
+                setting_value(&map_configs, MapSettingsType::OffsetY),
+                font.clone()
+            ),
+            build_settings_row(
+                MapSettingsType::Persistence,
+                MapSettingsButton::PersistenceDec,
+                MapSettingsButton::PersistenceInc,
+                setting_value(&map_configs, MapSettingsType::Persistence),
+                font.clone()
+            ),
+            build_settings_row(
+                MapSettingsType::Lacunarity,
+                MapSettingsButton::LacunarityDec,
+                MapSettingsButton::LacunarityInc,
+                setting_value(&map_configs, MapSettingsType::Lacunarity),
+                font.clone()
+            ),
+            build_settings_row(
+                MapSettingsType::Frequency,
+                MapSettingsButton::FrequencyDec,
+                MapSettingsButton::FrequencyInc,
+                setting_value(&map_configs, MapSettingsType::Frequency),
                 font
             )
         ]);
@@ -124,7 +190,7 @@ fn build_settings_row(
         },
         children![(
             Node {
-                width: px(250),
+                width: px(340),
                 justify_content: JustifyContent::FlexEnd,
                 align_items: AlignItems::Center,
                 ..default()
@@ -163,7 +229,7 @@ fn build_settings_row(
                 ),
                 (
                     Node {
-                        width: px(48),
+                        width: px(96),
                         height: px(28),
                         margin: UiRect::horizontal(px(8)),
                         justify_content: JustifyContent::Center,
@@ -239,6 +305,9 @@ fn button_system(
 }
 
 fn trigger_button_action(btn: &MapSettingsButton, map_configs: &mut MapConfigs) {
+    const FLOAT_STEP: f64 = 0.1;
+    const OFFSET_STEP: f64 = 1.0;
+
     match btn {
         MapSettingsButton::HeightDec => {
             if map_configs.height > 1 {
@@ -258,6 +327,28 @@ fn trigger_button_action(btn: &MapSettingsButton, map_configs: &mut MapConfigs) 
             }
         }
         MapSettingsButton::ScaleInc => map_configs.scale += 1.0,
+        MapSettingsButton::SeedDec => {
+            map_configs.seed = map_configs.seed.saturating_sub(1);
+        }
+        MapSettingsButton::SeedInc => {
+            map_configs.seed = map_configs.seed.saturating_add(1);
+        }
+        MapSettingsButton::OffsetXDec => map_configs.offset_x -= OFFSET_STEP,
+        MapSettingsButton::OffsetXInc => map_configs.offset_x += OFFSET_STEP,
+        MapSettingsButton::OffsetYDec => map_configs.offset_y -= OFFSET_STEP,
+        MapSettingsButton::OffsetYInc => map_configs.offset_y += OFFSET_STEP,
+        MapSettingsButton::PersistenceDec => {
+            map_configs.persistence = (map_configs.persistence - FLOAT_STEP).max(0.0);
+        }
+        MapSettingsButton::PersistenceInc => map_configs.persistence += FLOAT_STEP,
+        MapSettingsButton::LacunarityDec => {
+            map_configs.lacunarity = (map_configs.lacunarity - FLOAT_STEP).max(0.0);
+        }
+        MapSettingsButton::LacunarityInc => map_configs.lacunarity += FLOAT_STEP,
+        MapSettingsButton::FrequencyDec => {
+            map_configs.frequency = (map_configs.frequency - FLOAT_STEP).max(0.1);
+        }
+        MapSettingsButton::FrequencyInc => map_configs.frequency += FLOAT_STEP,
     }
 }
 
@@ -302,6 +393,12 @@ fn setting_value(map_configs: &MapConfigs, setting_type: MapSettingsType) -> Str
         MapSettingsType::Height => map_configs.height.to_string(),
         MapSettingsType::Width => map_configs.width.to_string(),
         MapSettingsType::Scale => format!("{:.1}", map_configs.scale),
+        MapSettingsType::Seed => map_configs.seed.to_string(),
+        MapSettingsType::OffsetX => format!("{:.1}", map_configs.offset_x),
+        MapSettingsType::OffsetY => format!("{:.1}", map_configs.offset_y),
+        MapSettingsType::Persistence => format!("{:.1}", map_configs.persistence),
+        MapSettingsType::Lacunarity => format!("{:.1}", map_configs.lacunarity),
+        MapSettingsType::Frequency => format!("{:.1}", map_configs.frequency),
     }
 }
 
