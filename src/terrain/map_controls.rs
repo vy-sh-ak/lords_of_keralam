@@ -1,10 +1,12 @@
 use bevy::{prelude::*, text::DEFAULT_FONT_DATA, time::Time, window::RequestRedraw};
+use bevy_persistent::Persistent;
 
 use super::MapConfigs;
 
 const NORMAL_BUTTON: Color = Color::srgb(0.15, 0.15, 0.15);
 const HOVERED_BUTTON: Color = Color::srgb(0.25, 0.25, 0.25);
 const PRESSED_BUTTON: Color = Color::srgb(0.35, 0.75, 0.35);
+const AUTOSAVE_IDLE_SECONDS: f32 = 5.0;
 
 pub struct MapControlsPlugin;
 
@@ -66,9 +68,38 @@ struct HeldButton {
     last_repeat: Option<f64>,
 }
 
+#[derive(Resource)]
+struct MapConfigAutosave {
+    timer: Timer,
+    dirty: bool,
+}
+
+impl Default for MapConfigAutosave {
+    fn default() -> Self {
+        let mut timer = Timer::from_seconds(AUTOSAVE_IDLE_SECONDS, TimerMode::Once);
+        timer.pause();
+
+        Self { timer, dirty: false }
+    }
+}
+
+impl MapConfigAutosave {
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+        self.timer.reset();
+        self.timer.unpause();
+    }
+
+    fn mark_clean(&mut self) {
+        self.dirty = false;
+        self.timer.pause();
+    }
+}
+
 impl Plugin for MapControlsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(HeldButton::default())
+            .insert_resource(MapConfigAutosave::default())
             .add_systems(Startup, setup_controls)
             .add_systems(
                 Update,
@@ -76,6 +107,7 @@ impl Plugin for MapControlsPlugin {
                     button_system,
                     button_color_system,
                     button_repeat_system,
+                    autosave_map_configs.after(button_repeat_system),
                     sync_setting_labels,
                 ),
             );
@@ -84,7 +116,7 @@ impl Plugin for MapControlsPlugin {
 
 fn setup_controls(
     mut commands: Commands,
-    map_configs: Res<MapConfigs>,
+    map_configs: Res<Persistent<MapConfigs>>,
     mut fonts: ResMut<Assets<Font>>,
 ) {
     info!("Controls....");
@@ -280,15 +312,16 @@ fn button_system(
         (&Interaction, &MapSettingsButton),
         (Changed<Interaction>, With<Button>),
     >,
-    mut map_configs: ResMut<MapConfigs>,
+    mut map_configs: ResMut<Persistent<MapConfigs>>,
     mut held: ResMut<HeldButton>,
+    mut autosave: ResMut<MapConfigAutosave>,
     time: Res<Time>,
 ) {
     let now = time.elapsed_secs_f64();
     for (interaction, btn) in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
-                trigger_button_action(btn, &mut map_configs);
+                trigger_button_action(btn, &mut map_configs, &mut autosave);
                 held.button = Some(*btn);
                 held.pressed_at = Some(now);
                 held.last_repeat = Some(now);
@@ -304,7 +337,17 @@ fn button_system(
     }
 }
 
-fn trigger_button_action(btn: &MapSettingsButton, map_configs: &mut MapConfigs) {
+fn trigger_button_action(
+    btn: &MapSettingsButton,
+    map_configs: &mut Persistent<MapConfigs>,
+    autosave: &mut MapConfigAutosave,
+) {
+    if apply_button_action(btn, map_configs.get_mut()) {
+        autosave.mark_dirty();
+    }
+}
+
+fn apply_button_action(btn: &MapSettingsButton, map_configs: &mut MapConfigs) -> bool {
     const FLOAT_STEP: f64 = 0.1;
     const OFFSET_STEP: f64 = 1.0;
 
@@ -312,50 +355,95 @@ fn trigger_button_action(btn: &MapSettingsButton, map_configs: &mut MapConfigs) 
         MapSettingsButton::HeightDec => {
             if map_configs.height > 1 {
                 map_configs.height -= 1;
+                true
+            } else {
+                false
             }
         }
-        MapSettingsButton::HeightInc => map_configs.height += 1,
+        MapSettingsButton::HeightInc => {
+            map_configs.height += 1;
+            true
+        }
         MapSettingsButton::WidthDec => {
             if map_configs.width > 1 {
                 map_configs.width -= 1;
+                true
+            } else {
+                false
             }
         }
-        MapSettingsButton::WidthInc => map_configs.width += 1,
+        MapSettingsButton::WidthInc => {
+            map_configs.width += 1;
+            true
+        }
         MapSettingsButton::ScaleDec => {
             if map_configs.scale > 1.0 {
                 map_configs.scale -= 1.0;
+                true
+            } else {
+                false
             }
         }
-        MapSettingsButton::ScaleInc => map_configs.scale += 1.0,
+        MapSettingsButton::ScaleInc => {
+            map_configs.scale += 1.0;
+            true
+        }
         MapSettingsButton::SeedDec => {
             map_configs.seed = map_configs.seed.saturating_sub(1);
+            true
         }
         MapSettingsButton::SeedInc => {
             map_configs.seed = map_configs.seed.saturating_add(1);
+            true
         }
-        MapSettingsButton::OffsetXDec => map_configs.offset_x -= OFFSET_STEP,
-        MapSettingsButton::OffsetXInc => map_configs.offset_x += OFFSET_STEP,
-        MapSettingsButton::OffsetYDec => map_configs.offset_y -= OFFSET_STEP,
-        MapSettingsButton::OffsetYInc => map_configs.offset_y += OFFSET_STEP,
+        MapSettingsButton::OffsetXDec => {
+            map_configs.offset_x -= OFFSET_STEP;
+            true
+        }
+        MapSettingsButton::OffsetXInc => {
+            map_configs.offset_x += OFFSET_STEP;
+            true
+        }
+        MapSettingsButton::OffsetYDec => {
+            map_configs.offset_y -= OFFSET_STEP;
+            true
+        }
+        MapSettingsButton::OffsetYInc => {
+            map_configs.offset_y += OFFSET_STEP;
+            true
+        }
         MapSettingsButton::PersistenceDec => {
             map_configs.persistence = (map_configs.persistence - FLOAT_STEP).max(0.0);
+            true
         }
-        MapSettingsButton::PersistenceInc => map_configs.persistence += FLOAT_STEP,
+        MapSettingsButton::PersistenceInc => {
+            map_configs.persistence += FLOAT_STEP;
+            true
+        }
         MapSettingsButton::LacunarityDec => {
             map_configs.lacunarity = (map_configs.lacunarity - FLOAT_STEP).max(0.0);
+            true
         }
-        MapSettingsButton::LacunarityInc => map_configs.lacunarity += FLOAT_STEP,
+        MapSettingsButton::LacunarityInc => {
+            map_configs.lacunarity += FLOAT_STEP;
+            true
+        }
         MapSettingsButton::FrequencyDec => {
             map_configs.frequency = (map_configs.frequency - FLOAT_STEP).max(0.1);
+            true
         }
-        MapSettingsButton::FrequencyInc => map_configs.frequency += FLOAT_STEP,
+        MapSettingsButton::FrequencyInc => {
+            map_configs.frequency += FLOAT_STEP;
+            true
+        }
     }
 }
 
 fn button_repeat_system(
     time: Res<Time>,
     mut held: ResMut<HeldButton>,
-    mut map_configs: ResMut<MapConfigs>,
+    mut map_configs: ResMut<Persistent<MapConfigs>>,
+    mut autosave: ResMut<MapConfigAutosave>,
     mut request_redraw_writer: MessageWriter<RequestRedraw>,
 ) {
     if held.button.is_some() {
@@ -369,14 +457,38 @@ fn button_repeat_system(
         let last_repeat = held.last_repeat.unwrap_or(pressed_at);
         let since_last = now - last_repeat;
         if since_pressed > INITIAL_DELAY && since_last > REPEAT_RATE {
-            trigger_button_action(&btn, &mut map_configs);
+            trigger_button_action(&btn, &mut map_configs, &mut autosave);
             held.last_repeat = Some(now);
         }
     }
 }
 
+fn autosave_map_configs(
+    time: Res<Time>,
+    mut autosave: ResMut<MapConfigAutosave>,
+    map_configs: Res<Persistent<MapConfigs>>,
+) {
+    if !autosave.dirty {
+        return;
+    }
+
+    autosave.timer.tick(time.delta());
+    if !autosave.timer.just_finished() {
+        return;
+    }
+
+    if let Err(error) = map_configs.persist() {
+        bevy::log::error!("failed to autosave map configs: {error}");
+        autosave.timer.reset();
+        autosave.timer.unpause();
+        return;
+    }
+
+    autosave.mark_clean();
+}
+
 fn sync_setting_labels(
-    map_configs: Res<MapConfigs>,
+    map_configs: Res<Persistent<MapConfigs>>,
     mut query: Query<(&MapSettingsType, &mut Text)>,
 ) {
     if !map_configs.is_changed() {
@@ -388,7 +500,7 @@ fn sync_setting_labels(
     }
 }
 
-fn setting_value(map_configs: &MapConfigs, setting_type: MapSettingsType) -> String {
+fn setting_value(map_configs: &Persistent<MapConfigs>, setting_type: MapSettingsType) -> String {
     match setting_type {
         MapSettingsType::Height => map_configs.height.to_string(),
         MapSettingsType::Width => map_configs.width.to_string(),

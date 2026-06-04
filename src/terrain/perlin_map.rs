@@ -1,18 +1,20 @@
-use crate::terrain::MapControlsPlugin;
+use crate::{persistence, terrain::MapControlsPlugin};
 use bevy::{
     asset::RenderAssetUsages,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
+use bevy_persistent::prelude::*;
 use noise::{NoiseFn, Perlin};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
+use serde::{Deserialize, Serialize};
 
 pub struct PerlinMapPlugin;
 
 #[derive(Component)]
 struct GroundPlane;
 
-#[derive(Resource, Clone, Copy)]
+#[derive(Resource, Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MapConfigs {
     pub height: u32,
     pub width: u32,
@@ -26,9 +28,9 @@ pub struct MapConfigs {
     pub offset_y: f64,
 }
 
-impl Plugin for PerlinMapPlugin {
-    fn build(&self, app: &mut App) {
-        app.insert_resource(MapConfigs {
+impl Default for MapConfigs {
+    fn default() -> Self {
+        Self {
             height: 100,
             width: 100,
             scale: 4.0,
@@ -39,14 +41,104 @@ impl Plugin for PerlinMapPlugin {
             seed: 0,
             offset_x: 0.0,
             offset_y: 0.0,
-        })
+        }
+    }
+}
+
+impl MapConfigs {
+    fn sanitized(self) -> Self {
+        let defaults = Self::default();
+
+        if self.looks_like_legacy_clamped_default() {
+            return defaults;
+        }
+
+        Self {
+            height: valid_non_zero_or(self.height, defaults.height),
+            width: valid_non_zero_or(self.width, defaults.width),
+            scale: valid_positive_or(self.scale, defaults.scale),
+            octaves: valid_non_zero_or(self.octaves, defaults.octaves),
+            persistence: valid_non_negative_or(self.persistence, defaults.persistence),
+            lacunarity: valid_positive_or(self.lacunarity, defaults.lacunarity),
+            frequency: valid_positive_or(self.frequency, defaults.frequency),
+            seed: self.seed,
+            offset_x: valid_finite_or(self.offset_x, defaults.offset_x),
+            offset_y: valid_finite_or(self.offset_y, defaults.offset_y),
+        }
+    }
+
+    fn looks_like_legacy_clamped_default(self) -> bool {
+        let defaults = Self::default();
+
+        self.height == 1
+            && self.width == 1
+            && self.octaves == 1
+            && approx_eq(self.scale, defaults.scale)
+            && (approx_eq(self.persistence, 0.0) || approx_eq(self.persistence, defaults.persistence))
+            && approx_eq(self.lacunarity, defaults.lacunarity)
+            && approx_eq(self.frequency, defaults.frequency)
+            && self.seed == defaults.seed
+            && approx_eq(self.offset_x, defaults.offset_x)
+            && approx_eq(self.offset_y, defaults.offset_y)
+    }
+}
+
+impl Plugin for PerlinMapPlugin {
+    fn build(&self, app: &mut App) {
+        let persistence = persistence::PersistenceConfig::new("map_configs");
+        let mut map_configs = persistence.get_resource::<MapConfigs>("map configs", "map_configs.bin");
+        let sanitized_map_configs = map_configs.sanitized();
+
+        if *map_configs != sanitized_map_configs {
+            map_configs
+                .set(sanitized_map_configs)
+                .expect("failed to sanitize persisted map configs");
+        }
+
+        app.insert_resource(map_configs)
         .add_plugins(MapControlsPlugin)
         .add_systems(Startup, setup_noise_plane)
         .add_systems(
             Update,
-            refresh_noise_plane.run_if(resource_changed::<MapConfigs>),
+            refresh_noise_plane.run_if(resource_changed::<Persistent<MapConfigs>>),
         );
     }
+}
+
+fn valid_positive_or(value: f64, fallback: f64) -> f64 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        fallback
+    }
+}
+
+fn valid_non_zero_or(value: u32, fallback: u32) -> u32 {
+    if value > 0 {
+        value
+    } else {
+        fallback
+    }
+}
+
+fn valid_non_negative_or(value: f64, fallback: f64) -> f64 {
+    if value.is_finite() && value >= 0.0 {
+        value
+    } else {
+        fallback
+    }
+}
+
+fn valid_finite_or(value: f64, fallback: f64) -> f64 {
+    if value.is_finite() {
+        value
+    } else {
+        fallback
+    }
+}
+
+fn approx_eq(left: f64, right: f64) -> bool {
+    (left - right).abs() <= f64::EPSILON
 }
 
 fn create_noise_texture(map_configs: &MapConfigs) -> Image {
@@ -146,7 +238,7 @@ fn setup_noise_plane(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    map_configs: Res<MapConfigs>,
+    map_configs: Res<Persistent<MapConfigs>>,
 ) {
     let texture_handle = images.add(create_noise_texture(&map_configs));
 
@@ -170,7 +262,7 @@ fn setup_noise_plane(
 }
 
 fn refresh_noise_plane(
-    map_configs: Res<MapConfigs>,
+    map_configs: Res<Persistent<MapConfigs>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,

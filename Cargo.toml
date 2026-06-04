@@ -6,9 +6,14 @@ edition = "2024"
 [dependencies]
 bevy = { version = "0.18.1", features = ["dynamic_linking"] }
 bevy_voxel_world = "0.16.0"
+bevy_egui = "0.39"
 noise = "0.9.0"
 noiz = "0.4.0"
 rand = "0.10.1"
+bevy-settings = "0.7.2"
+serde = "1.0.228"
+serde_json = "1.0.150"
+bevy-persistent = { version = "0.10.0", features = ["all"] }
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]

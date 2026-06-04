@@ -1,13 +1,13 @@
 use bevy::{
-    diagnostic::FrameTimeDiagnosticsPlugin, light::CascadeShadowConfigBuilder, prelude::*,
-    math::primitives::Plane3d,
+    diagnostic::FrameTimeDiagnosticsPlugin, light::CascadeShadowConfigBuilder,
+    math::primitives::Plane3d, prelude::*,
 };
 use bevy_voxel_world::{custom_meshing::CHUNK_SIZE_F, prelude::*};
 
 mod camera_plugin;
 mod compass;
 mod world_direction;
-
+mod persistence;
 mod terrain;
 
 fn main() {
@@ -18,9 +18,7 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (
-                compass::update_compass_system.after(camera_plugin::CameraSystems::UpdateState),
-            ),
+            (compass::update_compass_system.after(camera_plugin::CameraSystems::UpdateState),),
         )
         .run();
 }
@@ -64,8 +62,6 @@ fn setup(
         brightness: 100.0,
         affects_lightmapped_meshes: true,
     });
-
-   
 
     // let font = fonts.add(Font::try_from_bytes(DEFAULT_FONT_DATA.to_vec()).unwrap());
     // commands.spawn((
