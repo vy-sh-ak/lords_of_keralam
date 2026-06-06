@@ -14,21 +14,26 @@ pub struct MapConfigs {
     pub offset_x: f64,
     pub offset_y: f64,
     pub draw_mode: DrawMode,
+    #[serde(default)]
+    pub show_uv_wireframe: bool,
+    pub height_multiplier: f32,
     pub regions: Vec<TerrainType>,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DrawMode {
     NoiseMap,
     ColorMap,
+    Mesh,
 }
 
 impl DrawMode {
-    pub const ALL: [Self; 2] = [Self::NoiseMap, Self::ColorMap];
+    pub const ALL: [Self; 3] = [Self::NoiseMap, Self::ColorMap, Self::Mesh];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::NoiseMap => "Noise Map",
             Self::ColorMap => "Color Map",
+            Self::Mesh => "Mesh",
         }
     }
 }
@@ -70,6 +75,8 @@ impl Default for MapConfigs {
             offset_x: 0.0,
             offset_y: 0.0,
             draw_mode: DrawMode::default(),
+            show_uv_wireframe: false,
+            height_multiplier: 1.0,
             regions: vec![],
         }
     }
@@ -78,6 +85,7 @@ impl Default for MapConfigs {
 impl MapConfigs {
     const SCALE_STEP: f64 = 1.0;
     const FLOAT_STEP: f64 = 0.1;
+    const HEIGHT_MULTIPLIER_STEP: f32 = 0.1;
     const OFFSET_STEP: f64 = 1.0;
 
     pub(crate) fn sanitized(&self) -> Self {
@@ -99,6 +107,12 @@ impl MapConfigs {
             offset_x: valid_finite_or(self.offset_x, defaults.offset_x),
             offset_y: valid_finite_or(self.offset_y, defaults.offset_y),
             draw_mode: self.draw_mode,
+            show_uv_wireframe: self.show_uv_wireframe,
+            height_multiplier: if self.height_multiplier.is_finite() && self.height_multiplier > 0.0 {
+                self.height_multiplier
+            } else {
+                defaults.height_multiplier
+            },
             regions: if self.regions.is_empty() {
                 defaults.regions
             } else {
@@ -121,6 +135,7 @@ impl MapConfigs {
             && self.seed == defaults.seed
             && approx_eq(self.offset_x, defaults.offset_x)
             && approx_eq(self.offset_y, defaults.offset_y)
+            && approx_eq(self.height_multiplier as f64, defaults.height_multiplier as f64)
     }
 
     pub fn set_height(&mut self, height: u32) -> bool {
@@ -249,12 +264,36 @@ impl MapConfigs {
         set_f64_value(&mut self.frequency, next_frequency)
     }
 
+    pub fn set_height_multiplier(&mut self, height_multiplier: f32) -> bool {
+        set_positive_f32_value(&mut self.height_multiplier, height_multiplier)
+    }
+
+    pub fn decrement_height_multiplier(&mut self) -> bool {
+        let next_height_multiplier =
+            (self.height_multiplier - Self::HEIGHT_MULTIPLIER_STEP).max(Self::HEIGHT_MULTIPLIER_STEP);
+        set_f32_value(&mut self.height_multiplier, next_height_multiplier)
+    }
+
+    pub fn increment_height_multiplier(&mut self) -> bool {
+        let next_height_multiplier = self.height_multiplier + Self::HEIGHT_MULTIPLIER_STEP;
+        set_f32_value(&mut self.height_multiplier, next_height_multiplier)
+    }
+
     pub fn set_draw_mode(&mut self, draw_mode: DrawMode) -> bool {
         if self.draw_mode == draw_mode {
             return false;
         }
 
         self.draw_mode = draw_mode;
+        true
+    }
+
+    pub fn set_show_uv_wireframe(&mut self, show_uv_wireframe: bool) -> bool {
+        if self.show_uv_wireframe == show_uv_wireframe {
+            return false;
+        }
+
+        self.show_uv_wireframe = show_uv_wireframe;
         true
     }
 
@@ -378,6 +417,23 @@ fn set_positive_value(slot: &mut f64, value: f64) -> bool {
     }
 }
 
+fn set_f32_value(slot: &mut f32, value: f32) -> bool {
+    if approx_eq_f32(*slot, value) {
+        return false;
+    }
+
+    *slot = value;
+    true
+}
+
+fn set_positive_f32_value(slot: &mut f32, value: f32) -> bool {
+    if value.is_finite() && value > 0.0 {
+        set_f32_value(slot, value)
+    } else {
+        false
+    }
+}
+
 fn set_non_negative_value(slot: &mut f64, value: f64) -> bool {
     if value.is_finite() && value >= 0.0 {
         set_f64_value(slot, value)
@@ -420,4 +476,8 @@ fn valid_finite_or(value: f64, fallback: f64) -> f64 {
 
 fn approx_eq(left: f64, right: f64) -> bool {
     (left - right).abs() <= f64::EPSILON
+}
+
+fn approx_eq_f32(left: f32, right: f32) -> bool {
+    (left - right).abs() <= f32::EPSILON
 }

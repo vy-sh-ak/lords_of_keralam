@@ -1,5 +1,8 @@
 use bevy::{
-    asset::RenderAssetUsages, image::ImageSampler, prelude::Image, render::render_resource::{Extent3d, FilterMode, TextureDimension, TextureFormat}
+    asset::RenderAssetUsages,
+    image::ImageSampler,
+    prelude::Image,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
 pub type ColorMap = Vec<Vec<[u8; 4]>>;

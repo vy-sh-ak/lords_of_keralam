@@ -1,5 +1,13 @@
 use bevy::{
-    diagnostic::FrameTimeDiagnosticsPlugin, light::CascadeShadowConfigBuilder, prelude::*,
+    diagnostic::FrameTimeDiagnosticsPlugin,
+    light::CascadeShadowConfigBuilder,
+    pbr::wireframe::{WireframeConfig, WireframePlugin},
+    prelude::*,
+    render::{
+        render_resource::WgpuFeatures,
+        settings::{RenderCreation, WgpuSettings},
+        RenderPlugin,
+    },
 };
 use bevy_egui::EguiPlugin;
 
@@ -13,10 +21,21 @@ mod world_direction;
 fn main() {
     App::new()
         .add_plugins((
-            DefaultPlugins,
+            DefaultPlugins.set(RenderPlugin {
+                render_creation: RenderCreation::Automatic(WgpuSettings {
+                    features: WgpuFeatures::POLYGON_MODE_LINE,
+                    ..default()
+                }),
+                ..default()
+            }),
             FrameTimeDiagnosticsPlugin::default(),
             EguiPlugin::default(),
+            WireframePlugin::default(),
         ))
+        .insert_resource(WireframeConfig {
+            global: false,
+            default_color: Color::BLACK.into(),
+        })
         .add_plugins(camera_plugin::CameraPlugin)
         .add_plugins(terrain::PerlinMapPlugin)
         .add_plugins(

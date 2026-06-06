@@ -1,9 +1,11 @@
 use super::{
+    MeshGenerator,
     perlin_map_texture::{texture_from_color_map, texture_from_height_map, ColorMap},
     DrawMode, MapConfigs, TerrainType,
 };
 use crate::{persistence, terrain::MapConfigPersistencePlugin};
 use bevy::{
+    pbr::wireframe::{Wireframe, WireframeColor},
     prelude::*,
 };
 use bevy_persistent::prelude::*;
@@ -11,6 +13,15 @@ use noise::{NoiseFn, Perlin};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 pub struct PerlinMapPlugin;
+
+const MESH_DEBUG_WIREFRAME_COLOR: Color = Color::srgb(0.5, 0.5, 0.5);
+
+struct RenderAssets {
+    mesh: Mesh,
+    texture: Image,
+    vertical_offset: f32,
+    show_wireframe: bool,
+}
 
 #[derive(Component)]
 struct GroundPlane;
@@ -38,16 +49,42 @@ impl Plugin for PerlinMapPlugin {
     }
 }
 
-fn create_noise_texture(map_configs: &MapConfigs) -> Image {
+fn create_render_assets(map_configs: &MapConfigs) -> RenderAssets {
     let noise_map = generate_noise_map(map_configs);
 
     match map_configs.draw_mode {
-        DrawMode::NoiseMap => texture_from_height_map(&noise_map),
+        DrawMode::NoiseMap => RenderAssets {
+            mesh: create_plane_mesh(map_configs),
+            texture: texture_from_height_map(&noise_map),
+            vertical_offset: -0.01,
+            show_wireframe: false,
+        },
         DrawMode::ColorMap => {
             let color_map = build_color_map(&noise_map, &map_configs.regions);
-            texture_from_color_map(&color_map)
+            RenderAssets {
+                mesh: create_plane_mesh(map_configs),
+                texture: texture_from_color_map(&color_map),
+                vertical_offset: -0.01,
+                show_wireframe: false,
+            }
+        }
+        DrawMode::Mesh => {
+            let color_map = build_color_map(&noise_map, &map_configs.regions);
+            RenderAssets {
+                mesh: MeshGenerator::generate_terrain_mesh(&noise_map, map_configs.height_multiplier).create_mesh(),
+                texture: texture_from_color_map(&color_map),
+                vertical_offset: 0.0,
+                show_wireframe: map_configs.show_uv_wireframe,
+            }
         }
     }
+}
+
+fn create_plane_mesh(map_configs: &MapConfigs) -> Mesh {
+    Plane3d::default()
+        .mesh()
+        .size(map_configs.width as f32, map_configs.height as f32)
+    .into()
 }
 
 fn build_color_map(noise_map: &[Vec<f32>], regions: &[TerrainType]) -> ColorMap {
@@ -143,52 +180,72 @@ fn setup_noise_plane(
     mut images: ResMut<Assets<Image>>,
     map_configs: Res<Persistent<MapConfigs>>,
 ) {
-    let texture_handle = images.add(create_noise_texture(&map_configs));
+    let render_assets = create_render_assets(&map_configs);
+    let texture_handle = images.add(render_assets.texture);
+    let mesh_handle = meshes.add(render_assets.mesh);
 
-    commands.spawn((
+    let mut entity_commands = commands.spawn((
         GroundPlane,
         Name::new("GroundPlane"),
-        Mesh3d(
-            meshes.add(
-                Plane3d::default()
-                    .mesh()
-                    .size(map_configs.width as f32, map_configs.height as f32),
-            ),
-        ),
+        Mesh3d(mesh_handle),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color_texture: Some(texture_handle),
             perceptual_roughness: 1.0,
             ..default()
         })),
-        Transform::from_xyz(0.0, -0.01, 0.0),
+        Transform::from_xyz(0.0, render_assets.vertical_offset, 0.0),
     ));
+
+    apply_wireframe_debug(&mut entity_commands, render_assets.show_wireframe);
 }
 
 fn refresh_noise_plane(
+    mut commands: Commands,
     map_configs: Res<Persistent<MapConfigs>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut ground_plane_query: Query<
-        (&mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>),
+        (
+            Entity,
+            &mut Mesh3d,
+            &mut MeshMaterial3d<StandardMaterial>,
+            &mut Transform,
+        ),
         With<GroundPlane>,
     >,
 ) {
-    let Ok((mut mesh_handle, mut material_handle)) = ground_plane_query.single_mut() else {
+    let Ok((entity, mut mesh_handle, mut material_handle, mut transform)) = ground_plane_query.single_mut()
+    else {
         return;
     };
 
-    *mesh_handle = Mesh3d(
-        meshes.add(
-            Plane3d::default()
-                .mesh()
-                .size(map_configs.width as f32, map_configs.height as f32),
-        ),
-    );
+    let render_assets = create_render_assets(&map_configs);
+
+    *mesh_handle = Mesh3d(meshes.add(render_assets.mesh));
 
     *material_handle = MeshMaterial3d(materials.add(StandardMaterial {
-        base_color_texture: Some(images.add(create_noise_texture(&map_configs))),
+        base_color_texture: Some(images.add(render_assets.texture)),
         perceptual_roughness: 1.0,
         ..default()
     }));
+
+    transform.translation = Vec3::new(0.0, render_assets.vertical_offset, 0.0);
+
+    let mut entity_commands = commands.entity(entity);
+    apply_wireframe_debug(&mut entity_commands, render_assets.show_wireframe);
+}
+
+fn apply_wireframe_debug(entity_commands: &mut EntityCommands, show_wireframe: bool) {
+    if show_wireframe {
+        entity_commands.insert((
+            Wireframe,
+            WireframeColor {
+                color: MESH_DEBUG_WIREFRAME_COLOR.into(),
+            },
+        ));
+    } else {
+        entity_commands.remove::<Wireframe>();
+        entity_commands.remove::<WireframeColor>();
+    }
 }

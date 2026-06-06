@@ -161,11 +161,12 @@ enum ScalarEditorField {
     Persistence,
     Lacunarity,
     Frequency,
+    HeightMultiplier,
     RegionsCount,
 }
 
 impl ScalarEditorField {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::Height,
         Self::Width,
         Self::Scale,
@@ -175,6 +176,7 @@ impl ScalarEditorField {
         Self::Persistence,
         Self::Lacunarity,
         Self::Frequency,
+        Self::HeightMultiplier,
         Self::RegionsCount,
     ];
 
@@ -189,6 +191,7 @@ impl ScalarEditorField {
             Self::Persistence => "Persistence",
             Self::Lacunarity => "Lacunarity",
             Self::Frequency => "Frequency",
+            Self::HeightMultiplier => "Height Multiplier",
             Self::RegionsCount => "Region Count",
         }
     }
@@ -204,6 +207,7 @@ impl ScalarEditorField {
             Self::Persistence => format_decimal(map_configs.persistence),
             Self::Lacunarity => format_decimal(map_configs.lacunarity),
             Self::Frequency => format_decimal(map_configs.frequency),
+            Self::HeightMultiplier => format_decimal(map_configs.height_multiplier as f64),
             Self::RegionsCount => map_configs.regions.len().to_string(),
         }
     }
@@ -219,6 +223,7 @@ impl ScalarEditorField {
             Self::Persistence => map_configs.decrement_persistence(),
             Self::Lacunarity => map_configs.decrement_lacunarity(),
             Self::Frequency => map_configs.decrement_frequency(),
+            Self::HeightMultiplier => map_configs.decrement_height_multiplier(),
             Self::RegionsCount => map_configs.decrement_region_count(),
         }
     }
@@ -234,6 +239,7 @@ impl ScalarEditorField {
             Self::Persistence => map_configs.increment_persistence(),
             Self::Lacunarity => map_configs.increment_lacunarity(),
             Self::Frequency => map_configs.increment_frequency(),
+            Self::HeightMultiplier => map_configs.increment_height_multiplier(),
             Self::RegionsCount => map_configs.increment_region_count(),
         }
     }
@@ -285,6 +291,11 @@ impl ScalarEditorField {
                 .parse::<f64>()
                 .ok()
                 .is_some_and(|value| map_configs.set_frequency(value)),
+            Self::HeightMultiplier => input
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .is_some_and(|value| map_configs.set_height_multiplier(value)),
             Self::RegionsCount => input
                 .trim()
                 .parse::<usize>()
@@ -495,6 +506,28 @@ fn render_draw_mode_row(
     ui.end_row();
 
     if map_configs.get_mut().set_draw_mode(draw_mode) {
+        autosave.mark_dirty();
+    }
+
+    render_uv_wireframe_row(ui, map_configs, autosave);
+}
+
+fn render_uv_wireframe_row(
+    ui: &mut egui::Ui,
+    map_configs: &mut Persistent<MapConfigs>,
+    autosave: &mut MapConfigAutosave,
+) {
+    let enabled = map_configs.draw_mode == DrawMode::Mesh;
+    let mut show_uv_wireframe = map_configs.show_uv_wireframe;
+
+    ui.label("Show UV Wireframe");
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.checkbox(&mut show_uv_wireframe, "");
+    });
+    ui.label("");
+    ui.end_row();
+
+    if enabled && map_configs.get_mut().set_show_uv_wireframe(show_uv_wireframe) {
         autosave.mark_dirty();
     }
 }

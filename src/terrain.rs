@@ -3,6 +3,8 @@ pub mod perlin_map_config;
 pub mod perlin_map;
 pub mod perlin_map_texture;
 pub mod map_config_persistence;
+pub mod mesh_generator;
 pub use map_config_persistence::*;
 pub use perlin_map_config::*;
 pub use perlin_map::*;
+pub use mesh_generator::*;
