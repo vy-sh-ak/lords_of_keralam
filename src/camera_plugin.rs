@@ -5,6 +5,7 @@ use bevy::{
     prelude::*,
 };
 
+use crate::ui_editor::UIKeyboardCapture;
 use crate::world_direction::WorldDirection;
 
 const FOCUS_DEFAULTS: Vec3 = Vec3::new(3.0, 6.0, 3.0);
@@ -76,8 +77,13 @@ impl Plugin for CameraPlugin {
 fn move_focus(
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
+    keyboard_capture: Option<Res<UIKeyboardCapture>>,
     mut camera_settings: ResMut<CameraSettings>,
 ) {
+    if keyboard_capture.as_ref().is_some_and(|capture| capture.is_typing) {
+        return;
+    }
+
     let mut input = Vec2::ZERO;
 
     if keyboard.pressed(KeyCode::KeyW) {
@@ -128,8 +134,17 @@ fn zoom(
     camera: Single<&mut Transform, With<Camera>>,
     mut camera_settings: ResMut<CameraSettings>,
     mouse_wheel_input: Res<AccumulatedMouseScroll>,
+    keyboard_capture: Option<Res<UIKeyboardCapture>>,
 ) {
-    let delta = mouse_wheel_input.delta.y * camera_settings.zoom_speed;
+    let delta = if keyboard_capture
+        .as_ref()
+        .is_some_and(|capture| capture.wants_pointer_input)
+    {
+        0.0
+    } else {
+        mouse_wheel_input.delta.y * camera_settings.zoom_speed
+    };
+
     camera_settings.target_zoom = (camera_settings.target_zoom + delta).clamp(0.0, 1.0);
 
     let alpha = 1.0 - (-camera_settings.zoom_smoothness * time.delta_secs()).exp();

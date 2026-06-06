@@ -1,20 +1,31 @@
 use bevy::{
-    diagnostic::FrameTimeDiagnosticsPlugin, light::CascadeShadowConfigBuilder,
-    math::primitives::Plane3d, prelude::*,
+    diagnostic::FrameTimeDiagnosticsPlugin, light::CascadeShadowConfigBuilder, prelude::*,
 };
-use bevy_voxel_world::{custom_meshing::CHUNK_SIZE_F, prelude::*};
+use bevy_egui::EguiPlugin;
 
 mod camera_plugin;
 mod compass;
-mod world_direction;
 mod persistence;
 mod terrain;
+mod ui_editor;
+mod world_direction;
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, FrameTimeDiagnosticsPlugin::default()))
+        .add_plugins((
+            DefaultPlugins,
+            FrameTimeDiagnosticsPlugin::default(),
+            EguiPlugin::default(),
+        ))
         .add_plugins(camera_plugin::CameraPlugin)
         .add_plugins(terrain::PerlinMapPlugin)
+        .add_plugins(
+            ui_editor::UIEditor::default()
+                .with_panel_title("UI Editor")
+                .with_toggle_key(KeyCode::F1)
+                .starts_open(true)
+                .plugin(),
+        )
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -25,8 +36,6 @@ fn main() {
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.spawn((
         Name::new("Camera"),

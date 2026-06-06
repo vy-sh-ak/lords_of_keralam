@@ -1,92 +1,25 @@
-use crate::{persistence, terrain::MapControlsPlugin};
+use super::{
+    perlin_map_texture::{texture_from_color_map, texture_from_height_map, ColorMap},
+    DrawMode, MapConfigs, TerrainType,
+};
+use crate::{persistence, terrain::MapConfigPersistencePlugin};
 use bevy::{
-    asset::RenderAssetUsages,
     prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 use bevy_persistent::prelude::*;
 use noise::{NoiseFn, Perlin};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use serde::{Deserialize, Serialize};
 
 pub struct PerlinMapPlugin;
 
 #[derive(Component)]
 struct GroundPlane;
 
-#[derive(Resource, Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
-pub struct MapConfigs {
-    pub height: u32,
-    pub width: u32,
-    pub scale: f64,
-    pub octaves: u32,
-    pub persistence: f64,
-    pub lacunarity: f64,
-    pub frequency: f64,
-    pub seed: u32,
-    pub offset_x: f64,
-    pub offset_y: f64,
-}
-
-impl Default for MapConfigs {
-    fn default() -> Self {
-        Self {
-            height: 100,
-            width: 100,
-            scale: 4.0,
-            octaves: 5,
-            persistence: 0.4,
-            lacunarity: 2.8,
-            frequency: 1.0,
-            seed: 0,
-            offset_x: 0.0,
-            offset_y: 0.0,
-        }
-    }
-}
-
-impl MapConfigs {
-    fn sanitized(self) -> Self {
-        let defaults = Self::default();
-
-        if self.looks_like_legacy_clamped_default() {
-            return defaults;
-        }
-
-        Self {
-            height: valid_non_zero_or(self.height, defaults.height),
-            width: valid_non_zero_or(self.width, defaults.width),
-            scale: valid_positive_or(self.scale, defaults.scale),
-            octaves: valid_non_zero_or(self.octaves, defaults.octaves),
-            persistence: valid_non_negative_or(self.persistence, defaults.persistence),
-            lacunarity: valid_positive_or(self.lacunarity, defaults.lacunarity),
-            frequency: valid_positive_or(self.frequency, defaults.frequency),
-            seed: self.seed,
-            offset_x: valid_finite_or(self.offset_x, defaults.offset_x),
-            offset_y: valid_finite_or(self.offset_y, defaults.offset_y),
-        }
-    }
-
-    fn looks_like_legacy_clamped_default(self) -> bool {
-        let defaults = Self::default();
-
-        self.height == 1
-            && self.width == 1
-            && self.octaves == 1
-            && approx_eq(self.scale, defaults.scale)
-            && (approx_eq(self.persistence, 0.0) || approx_eq(self.persistence, defaults.persistence))
-            && approx_eq(self.lacunarity, defaults.lacunarity)
-            && approx_eq(self.frequency, defaults.frequency)
-            && self.seed == defaults.seed
-            && approx_eq(self.offset_x, defaults.offset_x)
-            && approx_eq(self.offset_y, defaults.offset_y)
-    }
-}
-
 impl Plugin for PerlinMapPlugin {
     fn build(&self, app: &mut App) {
         let persistence = persistence::PersistenceConfig::new("map_configs");
-        let mut map_configs = persistence.get_resource::<MapConfigs>("map configs", "map_configs.bin");
+        let mut map_configs =
+            persistence.get_resource::<MapConfigs>("map configs", "map_configs.bin");
         let sanitized_map_configs = map_configs.sanitized();
 
         if *map_configs != sanitized_map_configs {
@@ -96,82 +29,50 @@ impl Plugin for PerlinMapPlugin {
         }
 
         app.insert_resource(map_configs)
-        .add_plugins(MapControlsPlugin)
-        .add_systems(Startup, setup_noise_plane)
-        .add_systems(
-            Update,
-            refresh_noise_plane.run_if(resource_changed::<Persistent<MapConfigs>>),
-        );
+            .add_plugins(MapConfigPersistencePlugin)
+            .add_systems(Startup, setup_noise_plane)
+            .add_systems(
+                Update,
+                refresh_noise_plane.run_if(resource_changed::<Persistent<MapConfigs>>),
+            );
     }
-}
-
-fn valid_positive_or(value: f64, fallback: f64) -> f64 {
-    if value.is_finite() && value > 0.0 {
-        value
-    } else {
-        fallback
-    }
-}
-
-fn valid_non_zero_or(value: u32, fallback: u32) -> u32 {
-    if value > 0 {
-        value
-    } else {
-        fallback
-    }
-}
-
-fn valid_non_negative_or(value: f64, fallback: f64) -> f64 {
-    if value.is_finite() && value >= 0.0 {
-        value
-    } else {
-        fallback
-    }
-}
-
-fn valid_finite_or(value: f64, fallback: f64) -> f64 {
-    if value.is_finite() {
-        value
-    } else {
-        fallback
-    }
-}
-
-fn approx_eq(left: f64, right: f64) -> bool {
-    (left - right).abs() <= f64::EPSILON
 }
 
 fn create_noise_texture(map_configs: &MapConfigs) -> Image {
-    let width = map_configs.width;
-    let height = map_configs.height;
-
     let noise_map = generate_noise_map(map_configs);
 
-    let mut texture_data = Vec::with_capacity(noise_map.len() * 4);
-
-    for noise_value in noise_map {
-        let color_byte = (noise_value.clamp(0.0, 1.0) * 255.0) as u8;
-
-        texture_data.push(color_byte);
-        texture_data.push(color_byte);
-        texture_data.push(color_byte);
-        texture_data.push(255);
+    match map_configs.draw_mode {
+        DrawMode::NoiseMap => texture_from_height_map(&noise_map),
+        DrawMode::ColorMap => {
+            let color_map = build_color_map(&noise_map, &map_configs.regions);
+            texture_from_color_map(&color_map)
+        }
     }
-
-    Image::new(
-        Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        texture_data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
-    )
 }
 
-fn generate_noise_map(map_configs: &MapConfigs) -> Vec<f64> {
+fn build_color_map(noise_map: &[Vec<f32>], regions: &[TerrainType]) -> ColorMap {
+    noise_map
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|&height_value| terrain_color_for_height(height_value, regions))
+                .collect()
+        })
+        .collect()
+}
+
+fn terrain_color_for_height(height_value: f32, regions: &[TerrainType]) -> [u8; 4] {
+    for region in regions {
+        if (height_value as f64) <= region.height {
+            let (red, green, blue) = region.color;
+            return [red, green, blue, 255];
+        }
+    }
+
+    [0, 0, 0, 255]
+}
+
+fn generate_noise_map(map_configs: &MapConfigs) -> Vec<Vec<f32>> {
     let width = map_configs.width as usize;
     let height = map_configs.height as usize;
     let scale = map_configs.scale.max(0.0001);
@@ -181,7 +82,7 @@ fn generate_noise_map(map_configs: &MapConfigs) -> Vec<f64> {
     let perlin = Perlin::new(0);
     let octave_offsets = build_octave_offsets(map_configs, octaves);
 
-    let mut noise_map = vec![0.0; width * height];
+    let mut noise_map = vec![vec![0.0_f32; width]; height];
     let mut max_noise_height = f64::NEG_INFINITY;
     let mut min_noise_height = f64::INFINITY;
 
@@ -204,17 +105,19 @@ fn generate_noise_map(map_configs: &MapConfigs) -> Vec<f64> {
 
             max_noise_height = max_noise_height.max(noise_height);
             min_noise_height = min_noise_height.min(noise_height);
-            noise_map[y * width + x] = noise_height;
+            noise_map[y][x] = noise_height as f32;
         }
     }
 
     let noise_range = max_noise_height - min_noise_height;
-    for value in &mut noise_map {
-        *value = if noise_range.abs() <= f64::EPSILON {
-            0.0
-        } else {
-            ((*value - min_noise_height) / noise_range).clamp(0.0, 1.0)
-        };
+    for row in &mut noise_map {
+        for value in row {
+            *value = if noise_range.abs() <= f64::EPSILON {
+                0.0
+            } else {
+                (((*value as f64 - min_noise_height) / noise_range).clamp(0.0, 1.0)) as f32
+            };
+        }
     }
 
     noise_map
