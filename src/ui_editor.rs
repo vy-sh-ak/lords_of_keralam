@@ -8,9 +8,10 @@ use crate::terrain::{DrawMode, MapConfigAutosave, MapConfigs};
 
 pub mod widgets;
 
-use self::widgets::{property_grid, stepper_input_row};
+use self::widgets::{property_grid, stepper_input_row_enabled};
 
 const GRID_ID: &str = "ui_editor_map_config_grid";
+const HEIGHT_CURVE_GRID_ID: &str = "ui_editor_height_curve_grid";
 const REGION_GRID_ID_PREFIX: &str = "ui_editor_region_grid";
 
 #[derive(Resource, Clone)]
@@ -102,7 +103,39 @@ impl UIEditorState {
         }
 
         self.field_buffers
-            .retain(|field, _| field.should_keep(map_configs.regions.len()));
+            .retain(|field, _| {
+                field.should_keep(
+                    map_configs.regions.len(),
+                    map_configs.height_curve.points.len(),
+                    map_configs.endless_lod_bands.len(),
+                )
+            });
+
+        for index in 0..map_configs.height_curve.points.len() {
+            self.sync_buffer(
+                EditorField::CurvePointInput(index),
+                format_decimal(map_configs.height_curve.points[index].input as f64),
+                has_external_change,
+            );
+            self.sync_buffer(
+                EditorField::CurvePointOutput(index),
+                format_decimal(map_configs.height_curve.points[index].output as f64),
+                has_external_change,
+            );
+        }
+
+        for index in 0..map_configs.endless_lod_bands.len() {
+            self.sync_buffer(
+                EditorField::LodBandDistance(index),
+                format_decimal(map_configs.endless_lod_bands[index].visible_distance as f64),
+                has_external_change,
+            );
+            self.sync_buffer(
+                EditorField::LodBandLevel(index),
+                map_configs.endless_lod_bands[index].level_of_detail.to_string(),
+                has_external_change,
+            );
+        }
 
         for index in 0..map_configs.regions.len() {
             self.sync_buffer(
@@ -152,8 +185,8 @@ impl UIEditorState {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ScalarEditorField {
-    Height,
-    Width,
+    MapChunkSize,
+    LevelOfDetail,
     Scale,
     Seed,
     OffsetX,
@@ -167,8 +200,8 @@ enum ScalarEditorField {
 
 impl ScalarEditorField {
     const ALL: [Self; 11] = [
-        Self::Height,
-        Self::Width,
+        Self::MapChunkSize,
+        Self::LevelOfDetail,
         Self::Scale,
         Self::Seed,
         Self::OffsetX,
@@ -182,8 +215,8 @@ impl ScalarEditorField {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Height => "Height",
-            Self::Width => "Width",
+            Self::MapChunkSize => "Map Chunk Size",
+            Self::LevelOfDetail => "Level Of Detail (0-6)",
             Self::Scale => "Scale",
             Self::Seed => "Seed",
             Self::OffsetX => "Offset X",
@@ -196,10 +229,14 @@ impl ScalarEditorField {
         }
     }
 
+    fn is_read_only(self) -> bool {
+        matches!(self, Self::MapChunkSize)
+    }
+
     fn display_value(self, map_configs: &Persistent<MapConfigs>) -> String {
         match self {
-            Self::Height => map_configs.height.to_string(),
-            Self::Width => map_configs.width.to_string(),
+            Self::MapChunkSize => map_configs.map_chunk_size.to_string(),
+            Self::LevelOfDetail => map_configs.level_of_detail.to_string(),
             Self::Scale => format_decimal(map_configs.scale),
             Self::Seed => map_configs.seed.to_string(),
             Self::OffsetX => format_decimal(map_configs.offset_x),
@@ -214,8 +251,8 @@ impl ScalarEditorField {
 
     fn decrement(self, map_configs: &mut MapConfigs) -> bool {
         match self {
-            Self::Height => map_configs.decrement_height(),
-            Self::Width => map_configs.decrement_width(),
+            Self::MapChunkSize => map_configs.decrement_map_chunk_size(),
+            Self::LevelOfDetail => map_configs.decrement_level_of_detail(),
             Self::Scale => map_configs.decrement_scale(),
             Self::Seed => map_configs.decrement_seed(),
             Self::OffsetX => map_configs.decrement_offset_x(),
@@ -230,8 +267,8 @@ impl ScalarEditorField {
 
     fn increment(self, map_configs: &mut MapConfigs) -> bool {
         match self {
-            Self::Height => map_configs.increment_height(),
-            Self::Width => map_configs.increment_width(),
+            Self::MapChunkSize => map_configs.increment_map_chunk_size(),
+            Self::LevelOfDetail => map_configs.increment_level_of_detail(),
             Self::Scale => map_configs.increment_scale(),
             Self::Seed => map_configs.increment_seed(),
             Self::OffsetX => map_configs.increment_offset_x(),
@@ -246,16 +283,16 @@ impl ScalarEditorField {
 
     fn apply_input(self, input: &str, map_configs: &mut MapConfigs) -> bool {
         match self {
-            Self::Height => input
+            Self::MapChunkSize => input
                 .trim()
                 .parse::<u32>()
                 .ok()
-                .is_some_and(|value| map_configs.set_height(value)),
-            Self::Width => input
+                .is_some_and(|value| map_configs.set_map_chunk_size(value)),
+            Self::LevelOfDetail => input
                 .trim()
                 .parse::<u32>()
                 .ok()
-                .is_some_and(|value| map_configs.set_width(value)),
+                .is_some_and(|value| map_configs.set_level_of_detail(value)),
             Self::Scale => input
                 .trim()
                 .parse::<f64>()
@@ -308,6 +345,10 @@ impl ScalarEditorField {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum EditorField {
     Scalar(ScalarEditorField),
+    CurvePointInput(usize),
+    CurvePointOutput(usize),
+    LodBandDistance(usize),
+    LodBandLevel(usize),
     RegionName(usize),
     RegionHeight(usize),
 }
@@ -316,6 +357,28 @@ impl EditorField {
     fn display_value(&self, map_configs: &Persistent<MapConfigs>) -> String {
         match self {
             Self::Scalar(field) => field.display_value(map_configs),
+            Self::CurvePointInput(index) => map_configs
+                .height_curve
+                .points
+                .get(*index)
+                .map(|point| format_decimal(point.input as f64))
+                .unwrap_or_default(),
+            Self::CurvePointOutput(index) => map_configs
+                .height_curve
+                .points
+                .get(*index)
+                .map(|point| format_decimal(point.output as f64))
+                .unwrap_or_default(),
+            Self::LodBandDistance(index) => map_configs
+                .endless_lod_bands
+                .get(*index)
+                .map(|band| format_decimal(band.visible_distance as f64))
+                .unwrap_or_default(),
+            Self::LodBandLevel(index) => map_configs
+                .endless_lod_bands
+                .get(*index)
+                .map(|band| band.level_of_detail.to_string())
+                .unwrap_or_default(),
             Self::RegionName(index) => map_configs
                 .regions
                 .get(*index)
@@ -332,6 +395,26 @@ impl EditorField {
     fn apply_input(&self, input: &str, map_configs: &mut MapConfigs) -> bool {
         match self {
             Self::Scalar(field) => field.apply_input(input, map_configs),
+            Self::CurvePointInput(index) => input
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .is_some_and(|value| map_configs.set_height_curve_point_input(*index, value)),
+            Self::CurvePointOutput(index) => input
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .is_some_and(|value| map_configs.set_height_curve_point_output(*index, value)),
+            Self::LodBandDistance(index) => input
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .is_some_and(|value| map_configs.set_endless_lod_band_distance(*index, value)),
+            Self::LodBandLevel(index) => input
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .is_some_and(|value| map_configs.set_endless_lod_band_level_of_detail(*index, value)),
             Self::RegionName(index) => map_configs.set_region_name(*index, input.to_string()),
             Self::RegionHeight(index) => input
                 .trim()
@@ -341,9 +424,11 @@ impl EditorField {
         }
     }
 
-    fn should_keep(&self, region_count: usize) -> bool {
+    fn should_keep(&self, region_count: usize, curve_point_count: usize, lod_band_count: usize) -> bool {
         match self {
             Self::Scalar(_) => true,
+            Self::CurvePointInput(index) | Self::CurvePointOutput(index) => *index < curve_point_count,
+            Self::LodBandDistance(index) | Self::LodBandLevel(index) => *index < lod_band_count,
             Self::RegionName(index) | Self::RegionHeight(index) => *index < region_count,
         }
     }
@@ -406,6 +491,7 @@ fn render_ui_editor(
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("Terrain");
                 ui.label("Map Configuration");
+                ui.small("0 keeps the most detail. 6 simplifies the mesh the most.");
                 ui.add_space(6.0);
 
                 property_grid(ui, GRID_ID, |ui| {
@@ -422,6 +508,10 @@ fn render_ui_editor(
 
                     render_draw_mode_row(ui, &mut map_configs, &mut autosave);
                 });
+
+                render_endless_lod_bands_section(ui, &mut state, &mut map_configs, &mut autosave);
+
+                render_height_curve_section(ui, &mut state, &mut map_configs, &mut autosave);
 
                 ui.separator();
                 ui.heading("Regions");
@@ -456,9 +546,10 @@ fn render_editor_field_row(
     map_configs: &mut Persistent<MapConfigs>,
     autosave: &mut MapConfigAutosave,
 ) {
+    let enabled = !field.is_read_only();
     let response = {
         let buffer = state.input_mut(field);
-        stepper_input_row(ui, label, buffer)
+        stepper_input_row_enabled(ui, label, buffer, enabled)
     };
 
     if response.decrement_clicked() && field.decrement(map_configs.get_mut()) {
@@ -512,12 +603,99 @@ fn render_draw_mode_row(
     render_uv_wireframe_row(ui, map_configs, autosave);
 }
 
+fn render_height_curve_section(
+    ui: &mut egui::Ui,
+    state: &mut UIEditorState,
+    map_configs: &mut Persistent<MapConfigs>,
+    autosave: &mut MapConfigAutosave,
+) {
+    ui.separator();
+    ui.heading("Height Curve");
+    ui.small("Applies only to Mesh draw mode.");
+    ui.add_space(6.0);
+
+    ui.horizontal(|ui| {
+        if ui.button("Add Point").clicked() && map_configs.get_mut().add_height_curve_point() {
+            autosave.mark_dirty();
+            state.sync_from_map_configs(map_configs, true);
+        }
+
+        if ui.button("Reset Curve").clicked() && map_configs.get_mut().reset_height_curve() {
+            autosave.mark_dirty();
+            state.sync_from_map_configs(map_configs, true);
+        }
+    });
+
+    ui.add_space(6.0);
+
+    egui::Grid::new(HEIGHT_CURVE_GRID_ID)
+        .num_columns(4)
+        .spacing([8.0, 10.0])
+        .show(ui, |ui| {
+            ui.strong("Point");
+            ui.strong("Input");
+            ui.strong("Output");
+            ui.label("");
+            ui.end_row();
+
+            let point_count = map_configs.height_curve.points.len();
+            for index in 0..point_count {
+                if render_curve_point_row(ui, index, state, map_configs, autosave) {
+                    break;
+                }
+            }
+        });
+}
+
+fn render_endless_lod_bands_section(
+    ui: &mut egui::Ui,
+    state: &mut UIEditorState,
+    map_configs: &mut Persistent<MapConfigs>,
+    autosave: &mut MapConfigAutosave,
+) {
+    ui.separator();
+    ui.heading("Endless Terrain LOD");
+    ui.small("Used only in Endless Terrain mode. Distances are maximum visible ranges for each LOD band.");
+    ui.add_space(6.0);
+
+    ui.horizontal(|ui| {
+        if ui.button("Add Band").clicked() && map_configs.get_mut().add_endless_lod_band() {
+            autosave.mark_dirty();
+            state.sync_from_map_configs(map_configs, true);
+        }
+
+        if ui.button("Reset Bands").clicked() && map_configs.get_mut().reset_endless_lod_bands() {
+            autosave.mark_dirty();
+            state.sync_from_map_configs(map_configs, true);
+        }
+    });
+
+    ui.add_space(6.0);
+
+    egui::Grid::new("ui_editor_endless_lod_grid")
+        .num_columns(4)
+        .spacing([8.0, 10.0])
+        .show(ui, |ui| {
+            ui.strong("Band");
+            ui.strong("Max Distance");
+            ui.strong("LOD");
+            ui.label("");
+            ui.end_row();
+
+            for index in 0..map_configs.endless_lod_bands.len() {
+                if render_lod_band_row(ui, index, state, map_configs, autosave) {
+                    break;
+                }
+            }
+        });
+}
+
 fn render_uv_wireframe_row(
     ui: &mut egui::Ui,
     map_configs: &mut Persistent<MapConfigs>,
     autosave: &mut MapConfigAutosave,
 ) {
-    let enabled = map_configs.draw_mode == DrawMode::Mesh;
+    let enabled = matches!(map_configs.draw_mode, DrawMode::Mesh | DrawMode::EndlessTerrain);
     let mut show_uv_wireframe = map_configs.show_uv_wireframe;
 
     ui.label("Show UV Wireframe");
@@ -530,6 +708,156 @@ fn render_uv_wireframe_row(
     if enabled && map_configs.get_mut().set_show_uv_wireframe(show_uv_wireframe) {
         autosave.mark_dirty();
     }
+}
+
+fn render_lod_band_row(
+    ui: &mut egui::Ui,
+    index: usize,
+    state: &mut UIEditorState,
+    map_configs: &mut Persistent<MapConfigs>,
+    autosave: &mut MapConfigAutosave,
+) -> bool {
+    ui.label(format!("Band {}", index + 1));
+    render_lod_band_cell(
+        ui,
+        EditorField::LodBandDistance(index),
+        state,
+        map_configs,
+        autosave,
+        80.0,
+    );
+    render_lod_band_cell(
+        ui,
+        EditorField::LodBandLevel(index),
+        state,
+        map_configs,
+        autosave,
+        48.0,
+    );
+
+    let remove_clicked = ui
+        .add_enabled(
+            map_configs.endless_lod_bands.len() > 1,
+            egui::Button::new("Remove"),
+        )
+        .clicked();
+    ui.end_row();
+
+    if remove_clicked && map_configs.get_mut().remove_endless_lod_band(index) {
+        autosave.mark_dirty();
+        state.sync_from_map_configs(map_configs, true);
+        return true;
+    }
+
+    false
+}
+
+fn render_lod_band_cell(
+    ui: &mut egui::Ui,
+    field: EditorField,
+    state: &mut UIEditorState,
+    map_configs: &mut Persistent<MapConfigs>,
+    autosave: &mut MapConfigAutosave,
+    width: f32,
+) {
+    let response = {
+        let buffer = state.input_mut(field);
+        ui.add(
+            egui::TextEdit::singleline(buffer)
+                .desired_width(width)
+                .horizontal_align(egui::Align::Center),
+        )
+    };
+
+    if response.changed() {
+        let input = state.input_mut(field).clone();
+        if field.apply_input(input.as_str(), map_configs.get_mut()) {
+            autosave.mark_dirty();
+        }
+    }
+
+    if response.lost_focus() {
+        state.sync_field_from_map_configs(field, map_configs);
+    }
+
+    state.set_focus(field, response.has_focus());
+}
+
+fn render_curve_point_row(
+    ui: &mut egui::Ui,
+    index: usize,
+    state: &mut UIEditorState,
+    map_configs: &mut Persistent<MapConfigs>,
+    autosave: &mut MapConfigAutosave,
+) -> bool {
+    let point_count = map_configs.height_curve.points.len();
+    let is_endpoint = index == 0 || index + 1 == point_count;
+
+    ui.label(format!("Point {}", index + 1));
+    render_curve_point_cell(
+        ui,
+        EditorField::CurvePointInput(index),
+        state,
+        map_configs,
+        autosave,
+        !is_endpoint,
+    );
+    render_curve_point_cell(
+        ui,
+        EditorField::CurvePointOutput(index),
+        state,
+        map_configs,
+        autosave,
+        true,
+    );
+
+    let remove_clicked = ui.add_enabled(!is_endpoint, egui::Button::new("Remove")).clicked();
+    ui.end_row();
+
+    if remove_clicked && map_configs.get_mut().remove_height_curve_point(index) {
+        autosave.mark_dirty();
+        state.sync_from_map_configs(map_configs, true);
+        return true;
+    }
+
+    false
+}
+
+fn render_curve_point_cell(
+    ui: &mut egui::Ui,
+    field: EditorField,
+    state: &mut UIEditorState,
+    map_configs: &mut Persistent<MapConfigs>,
+    autosave: &mut MapConfigAutosave,
+    editable: bool,
+) {
+    if !editable {
+        state.set_focus(field, false);
+        ui.label(field.display_value(map_configs));
+        return;
+    }
+
+    let response = {
+        let buffer = state.input_mut(field);
+        ui.add(
+            egui::TextEdit::singleline(buffer)
+                .desired_width(64.0)
+                .horizontal_align(egui::Align::Center),
+        )
+    };
+
+    if response.changed() {
+        let input = state.input_mut(field).clone();
+        if field.apply_input(input.as_str(), map_configs.get_mut()) {
+            autosave.mark_dirty();
+        }
+    }
+
+    if response.lost_focus() {
+        state.sync_field_from_map_configs(field, map_configs);
+    }
+
+    state.set_focus(field, response.has_focus());
 }
 
 fn render_region_section(
@@ -633,17 +961,31 @@ fn render_region_color_row(
 }
 
 impl EditorField {
+    fn is_read_only(&self) -> bool {
+        matches!(self, Self::Scalar(field) if field.is_read_only())
+    }
+
     fn decrement(&self, map_configs: &mut MapConfigs) -> bool {
         match self {
             Self::Scalar(field) => field.decrement(map_configs),
-            Self::RegionName(_) | Self::RegionHeight(_) => false,
+            Self::CurvePointInput(_)
+            | Self::CurvePointOutput(_)
+            | Self::LodBandDistance(_)
+            | Self::LodBandLevel(_)
+            | Self::RegionName(_)
+            | Self::RegionHeight(_) => false,
         }
     }
 
     fn increment(&self, map_configs: &mut MapConfigs) -> bool {
         match self {
             Self::Scalar(field) => field.increment(map_configs),
-            Self::RegionName(_) | Self::RegionHeight(_) => false,
+            Self::CurvePointInput(_)
+            | Self::CurvePointOutput(_)
+            | Self::LodBandDistance(_)
+            | Self::LodBandLevel(_)
+            | Self::RegionName(_)
+            | Self::RegionHeight(_) => false,
         }
     }
 }

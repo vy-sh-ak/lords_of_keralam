@@ -2,6 +2,8 @@ use bevy::{
     asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
 };
 
+use super::HeightCurve;
+
 pub struct MeshData {
     pub vertices: Vec<Vec3>,
     pub uvs: Vec<Vec2>,
@@ -44,20 +46,39 @@ impl MeshData {
 }
 
 impl MeshGenerator {
-    pub fn generate_terrain_mesh(height_map: &[Vec<f32>], height_multiplier: f32) -> MeshData {
+    pub fn generate_terrain_mesh(
+        height_map: &[Vec<f32>],
+        height_multiplier: f32,
+        height_curve: &HeightCurve,
+        level_of_detail: u32,
+    ) -> MeshData {
         let height = height_map.len();
         let width = height_map.first().map_or(0, |row| row.len());
 
         let top_left_x = (width as f32 - 1.0) / -2.0;
         let top_left_z = (height as f32 - 1.0) / 2.0;
 
-        let mut mesh_data = MeshData::new(width, height);
+        let mesh_simplification_increment = if level_of_detail == 0 {
+            1
+        } else {
+            level_of_detail * 2
+        };
+        let vertices_per_row = ((width - 1) / mesh_simplification_increment as usize) + 1;
+        let vertices_per_column = ((height - 1) / mesh_simplification_increment as usize) + 1;
+        let mut mesh_data = MeshData::new(vertices_per_row, vertices_per_column);
 
-        for y in 0..height {
-            for x in 0..width {
+        for (mesh_y, y) in (0..height)
+            .step_by(mesh_simplification_increment as usize)
+            .enumerate()
+        {
+            for (mesh_x, x) in (0..width)
+                .step_by(mesh_simplification_increment as usize)
+                .enumerate()
+            {
+                let curved_height = height_curve.sample(height_map[y][x]);
                 let vertex_pos = Vec3::new(
                     top_left_x + x as f32,
-                    height_map[y][x] * height_multiplier,
+                    curved_height * height_multiplier,
                     top_left_z - y as f32,
                 );
                 mesh_data.vertices.push(vertex_pos);
@@ -76,17 +97,17 @@ impl MeshGenerator {
                 );
                 mesh_data.uvs.push(uv_coords);
 
-                if x < width - 1 && y < height - 1 {
-                    let vertex_index = (y * width + x) as u32;
-                    let width_u32 = width as u32;
+                if mesh_x + 1 < vertices_per_row && mesh_y + 1 < vertices_per_column {
+                    let vertex_index = (mesh_y * vertices_per_row + mesh_x) as u32;
+                    let vertices_per_row_u32 = vertices_per_row as u32;
 
                     mesh_data.add_triangle(
                         vertex_index,
-                        vertex_index + width_u32 + 1,
-                        vertex_index + width_u32,
+                        vertex_index + vertices_per_row_u32 + 1,
+                        vertex_index + vertices_per_row_u32,
                     );
                     mesh_data.add_triangle(
-                        vertex_index + width_u32 + 1,
+                        vertex_index + vertices_per_row_u32 + 1,
                         vertex_index,
                         vertex_index + 1,
                     );

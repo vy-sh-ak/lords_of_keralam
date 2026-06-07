@@ -1,10 +1,12 @@
 use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
+use super::HeightCurve;
+
 #[derive(Resource, Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MapConfigs {
-    pub height: u32,
-    pub width: u32,
+    pub map_chunk_size: u32,
+    pub level_of_detail: u32,
     pub scale: f64,
     pub octaves: u32,
     pub persistence: f64,
@@ -17,6 +19,10 @@ pub struct MapConfigs {
     #[serde(default)]
     pub show_uv_wireframe: bool,
     pub height_multiplier: f32,
+    #[serde(default)]
+    pub height_curve: HeightCurve,
+    #[serde(default = "default_endless_lod_bands")]
+    pub endless_lod_bands: Vec<EndlessTerrainLodBand>,
     pub regions: Vec<TerrainType>,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -24,16 +30,18 @@ pub enum DrawMode {
     NoiseMap,
     ColorMap,
     Mesh,
+    EndlessTerrain,
 }
 
 impl DrawMode {
-    pub const ALL: [Self; 3] = [Self::NoiseMap, Self::ColorMap, Self::Mesh];
+    pub const ALL: [Self; 4] = [Self::NoiseMap, Self::ColorMap, Self::Mesh, Self::EndlessTerrain];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::NoiseMap => "Noise Map",
             Self::ColorMap => "Color Map",
             Self::Mesh => "Mesh",
+            Self::EndlessTerrain => "Endless Terrain",
         }
     }
 }
@@ -51,6 +59,21 @@ pub struct TerrainType {
     pub color: (u8, u8, u8),
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EndlessTerrainLodBand {
+    pub level_of_detail: u32,
+    pub visible_distance: f32,
+}
+
+impl EndlessTerrainLodBand {
+    fn new(level_of_detail: u32, visible_distance: f32) -> Self {
+        Self {
+            level_of_detail,
+            visible_distance,
+        }
+    }
+}
+
 impl Default for TerrainType {
     fn default() -> Self {
         Self {
@@ -64,8 +87,8 @@ impl Default for TerrainType {
 impl Default for MapConfigs {
     fn default() -> Self {
         Self {
-            height: 100,
-            width: 100,
+            map_chunk_size: 241,
+            level_of_detail: 0,
             scale: 4.0,
             octaves: 5,
             persistence: 0.4,
@@ -77,12 +100,17 @@ impl Default for MapConfigs {
             draw_mode: DrawMode::default(),
             show_uv_wireframe: false,
             height_multiplier: 1.0,
+            height_curve: HeightCurve::default(),
+            endless_lod_bands: default_endless_lod_bands(),
             regions: vec![],
         }
     }
 }
 
 impl MapConfigs {
+    const MIN_LEVEL_OF_DETAIL: u32 = 0;
+    const MAX_LEVEL_OF_DETAIL: u32 = 6;
+    const MIN_VISIBLE_DISTANCE: f32 = 1.0;
     const SCALE_STEP: f64 = 1.0;
     const FLOAT_STEP: f64 = 0.1;
     const HEIGHT_MULTIPLIER_STEP: f32 = 0.1;
@@ -96,8 +124,13 @@ impl MapConfigs {
         }
 
         Self {
-            height: valid_non_zero_or(self.height, defaults.height),
-            width: valid_non_zero_or(self.width, defaults.width),
+            map_chunk_size: valid_non_zero_or(self.map_chunk_size, defaults.map_chunk_size),
+            level_of_detail: valid_inclusive_u32_or(
+                self.level_of_detail,
+                Self::MIN_LEVEL_OF_DETAIL,
+                Self::MAX_LEVEL_OF_DETAIL,
+                defaults.level_of_detail,
+            ),
             scale: valid_positive_or(self.scale, defaults.scale),
             octaves: valid_non_zero_or(self.octaves, defaults.octaves),
             persistence: valid_non_negative_or(self.persistence, defaults.persistence),
@@ -113,6 +146,8 @@ impl MapConfigs {
             } else {
                 defaults.height_multiplier
             },
+            height_curve: self.height_curve.sanitized(),
+            endless_lod_bands: sanitize_endless_lod_bands(&self.endless_lod_bands),
             regions: if self.regions.is_empty() {
                 defaults.regions
             } else {
@@ -124,8 +159,7 @@ impl MapConfigs {
     fn looks_like_legacy_clamped_default(&self) -> bool {
         let defaults = Self::default();
 
-        self.height == 1
-            && self.width == 1
+        self.map_chunk_size == 1
             && self.octaves == 1
             && approx_eq(self.scale, defaults.scale)
             && (approx_eq(self.persistence, 0.0)
@@ -138,28 +172,43 @@ impl MapConfigs {
             && approx_eq(self.height_multiplier as f64, defaults.height_multiplier as f64)
     }
 
-    pub fn set_height(&mut self, height: u32) -> bool {
-        set_non_zero_value(&mut self.height, height)
+    pub fn set_map_chunk_size(&mut self, map_chunk_size: u32) -> bool {
+        set_non_zero_value(&mut self.map_chunk_size, map_chunk_size)
     }
 
-    pub fn set_width(&mut self, width: u32) -> bool {
-        set_non_zero_value(&mut self.width, width)
+    pub fn decrement_map_chunk_size(&mut self) -> bool {
+        decrement_dimension(&mut self.map_chunk_size)
     }
 
-    pub fn decrement_height(&mut self) -> bool {
-        decrement_dimension(&mut self.height)
+    pub fn increment_map_chunk_size(&mut self) -> bool {
+        increment_dimension(&mut self.map_chunk_size)
     }
 
-    pub fn increment_height(&mut self) -> bool {
-        increment_dimension(&mut self.height)
+    pub fn set_level_of_detail(&mut self, level_of_detail: u32) -> bool {
+        set_u32_inclusive_value(
+            &mut self.level_of_detail,
+            level_of_detail,
+            Self::MIN_LEVEL_OF_DETAIL,
+            Self::MAX_LEVEL_OF_DETAIL,
+        )
     }
 
-    pub fn decrement_width(&mut self) -> bool {
-        decrement_dimension(&mut self.width)
+    pub fn decrement_level_of_detail(&mut self) -> bool {
+        if self.level_of_detail > Self::MIN_LEVEL_OF_DETAIL {
+            let next_level_of_detail = self.level_of_detail - 1;
+            set_u32_value(&mut self.level_of_detail, next_level_of_detail)
+        } else {
+            false
+        }
     }
 
-    pub fn increment_width(&mut self) -> bool {
-        increment_dimension(&mut self.width)
+    pub fn increment_level_of_detail(&mut self) -> bool {
+        if self.level_of_detail < Self::MAX_LEVEL_OF_DETAIL {
+            let next_level_of_detail = self.level_of_detail + 1;
+            set_u32_value(&mut self.level_of_detail, next_level_of_detail)
+        } else {
+            false
+        }
     }
 
     pub fn set_scale(&mut self, scale: f64) -> bool {
@@ -279,6 +328,119 @@ impl MapConfigs {
         set_f32_value(&mut self.height_multiplier, next_height_multiplier)
     }
 
+    pub fn add_height_curve_point(&mut self) -> bool {
+        self.height_curve.add_point()
+    }
+
+    pub fn remove_height_curve_point(&mut self, index: usize) -> bool {
+        self.height_curve.remove_point(index)
+    }
+
+    pub fn reset_height_curve(&mut self) -> bool {
+        self.height_curve.reset()
+    }
+
+    pub fn set_height_curve_point_input(&mut self, index: usize, input: f32) -> bool {
+        self.height_curve.set_point_input(index, input)
+    }
+
+    pub fn set_height_curve_point_output(&mut self, index: usize, output: f32) -> bool {
+        self.height_curve.set_point_output(index, output)
+    }
+
+    pub fn add_endless_lod_band(&mut self) -> bool {
+        let next_band = self
+            .endless_lod_bands
+            .last()
+            .cloned()
+            .map(|band| {
+                EndlessTerrainLodBand::new(
+                    band.level_of_detail,
+                    band.visible_distance + self.map_chunk_size.max(2) as f32,
+                )
+            })
+            .unwrap_or_else(|| default_endless_lod_bands()[0].clone());
+
+        self.endless_lod_bands.push(next_band);
+        true
+    }
+
+    pub fn remove_endless_lod_band(&mut self, index: usize) -> bool {
+        if self.endless_lod_bands.len() <= 1 || index >= self.endless_lod_bands.len() {
+            return false;
+        }
+
+        self.endless_lod_bands.remove(index);
+        true
+    }
+
+    pub fn reset_endless_lod_bands(&mut self) -> bool {
+        let defaults = default_endless_lod_bands();
+        if self.endless_lod_bands == defaults {
+            return false;
+        }
+
+        self.endless_lod_bands = defaults;
+        true
+    }
+
+    pub fn set_endless_lod_band_distance(&mut self, index: usize, visible_distance: f32) -> bool {
+        if !visible_distance.is_finite() || visible_distance < Self::MIN_VISIBLE_DISTANCE {
+            return false;
+        }
+
+        let previous = index
+            .checked_sub(1)
+            .and_then(|previous_index| self.endless_lod_bands.get(previous_index))
+            .map(|previous| previous.visible_distance)
+            .unwrap_or(Self::MIN_VISIBLE_DISTANCE);
+        let next = self
+            .endless_lod_bands
+            .get(index + 1)
+            .map(|next_band| next_band.visible_distance)
+            .unwrap_or(f32::MAX);
+        let clamped = visible_distance.clamp(previous, next);
+
+        let Some(band) = self.endless_lod_bands.get_mut(index) else {
+            return false;
+        };
+
+        if approx_eq_f32(band.visible_distance, clamped) {
+            return false;
+        }
+
+        band.visible_distance = clamped;
+        true
+    }
+
+    pub fn set_endless_lod_band_level_of_detail(
+        &mut self,
+        index: usize,
+        level_of_detail: u32,
+    ) -> bool {
+        let Some(band) = self.endless_lod_bands.get_mut(index) else {
+            return false;
+        };
+
+        if level_of_detail < Self::MIN_LEVEL_OF_DETAIL || level_of_detail > Self::MAX_LEVEL_OF_DETAIL {
+            return false;
+        }
+
+        if band.level_of_detail == level_of_detail {
+            return false;
+        }
+
+        band.level_of_detail = level_of_detail;
+        true
+    }
+
+    pub fn max_endless_visible_distance(&self) -> f32 {
+        self.endless_lod_bands
+            .last()
+            .map(|band| band.visible_distance.max(Self::MIN_VISIBLE_DISTANCE))
+            .unwrap_or(Self::MIN_VISIBLE_DISTANCE)
+    }
+
     pub fn set_draw_mode(&mut self, draw_mode: DrawMode) -> bool {
         if self.draw_mode == draw_mode {
             return false;
@@ -386,6 +548,14 @@ fn set_u32_value(slot: &mut u32, value: u32) -> bool {
     true
 }
 
+fn set_u32_inclusive_value(slot: &mut u32, value: u32, minimum: u32, maximum: u32) -> bool {
+    if value < minimum || value > maximum {
+        return false;
+    }
+
+    set_u32_value(slot, value)
+}
+
 fn decrement_dimension(slot: &mut u32) -> bool {
     if *slot > 1 {
         *slot -= 1;
@@ -462,6 +632,14 @@ fn valid_non_zero_or(value: u32, fallback: u32) -> u32 {
     if value > 0 { value } else { fallback }
 }
 
+fn valid_inclusive_u32_or(value: u32, minimum: u32, maximum: u32, fallback: u32) -> u32 {
+    if value >= minimum && value <= maximum {
+        value
+    } else {
+        fallback
+    }
+}
+
 fn valid_non_negative_or(value: f64, fallback: f64) -> f64 {
     if value.is_finite() && value >= 0.0 {
         value
@@ -480,4 +658,41 @@ fn approx_eq(left: f64, right: f64) -> bool {
 
 fn approx_eq_f32(left: f32, right: f32) -> bool {
     (left - right).abs() <= f32::EPSILON
+}
+
+fn default_endless_lod_bands() -> Vec<EndlessTerrainLodBand> {
+    vec![
+        EndlessTerrainLodBand::new(0, 220.0),
+        EndlessTerrainLodBand::new(2, 420.0),
+        EndlessTerrainLodBand::new(4, 700.0),
+        EndlessTerrainLodBand::new(6, 1050.0),
+    ]
+}
+
+fn sanitize_endless_lod_bands(bands: &[EndlessTerrainLodBand]) -> Vec<EndlessTerrainLodBand> {
+    let defaults = default_endless_lod_bands();
+    let mut sanitized: Vec<_> = bands
+        .iter()
+        .filter(|band| band.visible_distance.is_finite())
+        .map(|band| EndlessTerrainLodBand {
+            level_of_detail: band
+                .level_of_detail
+                .clamp(MapConfigs::MIN_LEVEL_OF_DETAIL, MapConfigs::MAX_LEVEL_OF_DETAIL),
+            visible_distance: band.visible_distance.max(MapConfigs::MIN_VISIBLE_DISTANCE),
+        })
+        .collect();
+
+    if sanitized.is_empty() {
+        return defaults;
+    }
+
+    sanitized.sort_by(|left, right| left.visible_distance.total_cmp(&right.visible_distance));
+
+    for index in 1..sanitized.len() {
+        if sanitized[index].visible_distance <= sanitized[index - 1].visible_distance {
+            sanitized[index].visible_distance = sanitized[index - 1].visible_distance + 1.0;
+        }
+    }
+
+    sanitized
 }

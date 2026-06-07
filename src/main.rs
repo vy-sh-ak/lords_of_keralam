@@ -4,9 +4,9 @@ use bevy::{
     pbr::wireframe::{WireframeConfig, WireframePlugin},
     prelude::*,
     render::{
+        RenderPlugin,
         render_resource::WgpuFeatures,
         settings::{RenderCreation, WgpuSettings},
-        RenderPlugin,
     },
 };
 use bevy_egui::EguiPlugin;
@@ -38,6 +38,7 @@ fn main() {
         })
         .add_plugins(camera_plugin::CameraPlugin)
         .add_plugins(terrain::PerlinMapPlugin)
+        .add_plugins(terrain::EndlessTerrainPlugin)
         .add_plugins(
             ui_editor::UIEditor::default()
                 .with_panel_title("UI Editor")

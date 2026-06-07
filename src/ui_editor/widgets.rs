@@ -37,19 +37,30 @@ pub fn property_grid(ui: &mut egui::Ui, id_source: impl Hash, add_rows: impl FnO
         .show(ui, add_rows);
 }
 
+#[allow(dead_code)]
 pub fn stepper_input_row(
     ui: &mut egui::Ui,
     label: &str,
     buffer: &mut String,
 ) -> StepperInputRowResponse {
+    stepper_input_row_enabled(ui, label, buffer, true)
+}
+
+pub fn stepper_input_row_enabled(
+    ui: &mut egui::Ui,
+    label: &str,
+    buffer: &mut String,
+    enabled: bool,
+) -> StepperInputRowResponse {
     ui.label(label);
-    let decrement_clicked = ui.small_button("-").clicked();
-    let text_response = ui.add(
+    let decrement_clicked = ui.add_enabled(enabled, egui::Button::new("-").small()).clicked();
+    let text_response = ui.add_enabled(
+        enabled,
         egui::TextEdit::singleline(buffer)
             .desired_width(96.0)
             .horizontal_align(egui::Align::Center),
     );
-    let increment_clicked = ui.small_button("+").clicked();
+    let increment_clicked = ui.add_enabled(enabled, egui::Button::new("+").small()).clicked();
     ui.end_row();
 
     StepperInputRowResponse {

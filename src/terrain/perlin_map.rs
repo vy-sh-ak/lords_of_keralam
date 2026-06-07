@@ -71,23 +71,35 @@ fn create_render_assets(map_configs: &MapConfigs) -> RenderAssets {
         DrawMode::Mesh => {
             let color_map = build_color_map(&noise_map, &map_configs.regions);
             RenderAssets {
-                mesh: MeshGenerator::generate_terrain_mesh(&noise_map, map_configs.height_multiplier).create_mesh(),
+                mesh: MeshGenerator::generate_terrain_mesh(
+                    &noise_map,
+                    map_configs.height_multiplier,
+                    &map_configs.height_curve,
+                    map_configs.level_of_detail,
+                )
+                .create_mesh(),
                 texture: texture_from_color_map(&color_map),
                 vertical_offset: 0.0,
                 show_wireframe: map_configs.show_uv_wireframe,
             }
         }
+        DrawMode::EndlessTerrain => RenderAssets {
+            mesh: create_plane_mesh(map_configs),
+            texture: texture_from_height_map(&noise_map),
+            vertical_offset: -0.01,
+            show_wireframe: false,
+        },
     }
 }
 
 fn create_plane_mesh(map_configs: &MapConfigs) -> Mesh {
     Plane3d::default()
         .mesh()
-        .size(map_configs.width as f32, map_configs.height as f32)
+        .size(map_configs.map_chunk_size as f32, map_configs.map_chunk_size as f32)
     .into()
 }
 
-fn build_color_map(noise_map: &[Vec<f32>], regions: &[TerrainType]) -> ColorMap {
+pub(crate) fn build_color_map(noise_map: &[Vec<f32>], regions: &[TerrainType]) -> ColorMap {
     noise_map
         .iter()
         .map(|row| {
@@ -109,19 +121,32 @@ fn terrain_color_for_height(height_value: f32, regions: &[TerrainType]) -> [u8; 
     [0, 0, 0, 255]
 }
 
-fn generate_noise_map(map_configs: &MapConfigs) -> Vec<Vec<f32>> {
-    let width = map_configs.width as usize;
-    let height = map_configs.height as usize;
+pub(crate) fn generate_noise_map(map_configs: &MapConfigs) -> Vec<Vec<f32>> {
+    generate_noise_map_for_chunk(map_configs, IVec2::ZERO)
+}
+
+pub(crate) fn chunk_span(map_configs: &MapConfigs) -> f32 {
+    map_configs.map_chunk_size.saturating_sub(1).max(1) as f32
+}
+
+pub(crate) fn generate_noise_map_for_chunk(
+    map_configs: &MapConfigs,
+    chunk_coord: IVec2,
+) -> Vec<Vec<f32>> {
+    let width = map_configs.map_chunk_size as usize;
+    let height = map_configs.map_chunk_size as usize;
     let scale = map_configs.scale.max(0.0001);
     let octaves = map_configs.octaves.max(1) as usize;
-    let half_width = map_configs.width as f64 / 2.0;
-    let half_height = map_configs.height as f64 / 2.0;
+    let half_width = map_configs.map_chunk_size as f64 / 2.0;
+    let half_height = map_configs.map_chunk_size as f64 / 2.0;
     let perlin = Perlin::new(0);
     let octave_offsets = build_octave_offsets(map_configs, octaves);
+    let chunk_span = map_configs.map_chunk_size.saturating_sub(1) as f64;
+    let chunk_offset_x = chunk_coord.x as f64 * chunk_span;
+    let chunk_offset_y = chunk_coord.y as f64 * chunk_span;
+    let max_possible_height = max_possible_noise_height(map_configs, octaves);
 
     let mut noise_map = vec![vec![0.0_f32; width]; height];
-    let mut max_noise_height = f64::NEG_INFINITY;
-    let mut min_noise_height = f64::INFINITY;
 
     for y in 0..height {
         for x in 0..width {
@@ -130,8 +155,8 @@ fn generate_noise_map(map_configs: &MapConfigs) -> Vec<Vec<f32>> {
             let mut noise_height = 0.0;
 
             for &(offset_x, offset_y) in &octave_offsets {
-                let sample_x = ((x as f64 - half_width) / scale) * frequency + offset_x;
-                let sample_y = ((y as f64 - half_height) / scale) * frequency + offset_y;
+                let sample_x = ((chunk_offset_x + x as f64 - half_width) / scale) * frequency + offset_x;
+                let sample_y = ((chunk_offset_y - y as f64 + half_height) / scale) * frequency + offset_y;
 
                 let perlin_value = perlin.get([sample_x, sample_y]);
                 noise_height += perlin_value * amplitude;
@@ -140,19 +165,11 @@ fn generate_noise_map(map_configs: &MapConfigs) -> Vec<Vec<f32>> {
                 frequency *= map_configs.lacunarity;
             }
 
-            max_noise_height = max_noise_height.max(noise_height);
-            min_noise_height = min_noise_height.min(noise_height);
-            noise_map[y][x] = noise_height as f32;
-        }
-    }
-
-    let noise_range = max_noise_height - min_noise_height;
-    for row in &mut noise_map {
-        for value in row {
-            *value = if noise_range.abs() <= f64::EPSILON {
+            noise_map[y][x] = if max_possible_height <= f64::EPSILON {
                 0.0
             } else {
-                (((*value as f64 - min_noise_height) / noise_range).clamp(0.0, 1.0)) as f32
+                (((noise_height + max_possible_height) / (max_possible_height * 2.0))
+                    .clamp(0.0, 1.0)) as f32
             };
         }
     }
@@ -173,6 +190,18 @@ fn build_octave_offsets(map_configs: &MapConfigs, octaves: usize) -> Vec<(f64, f
         .collect()
 }
 
+fn max_possible_noise_height(map_configs: &MapConfigs, octaves: usize) -> f64 {
+    let mut amplitude = 1.0;
+    let mut max_possible_height = 0.0;
+
+    for _ in 0..octaves {
+        max_possible_height += amplitude;
+        amplitude *= map_configs.persistence;
+    }
+
+    max_possible_height
+}
+
 fn setup_noise_plane(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -180,6 +209,10 @@ fn setup_noise_plane(
     mut images: ResMut<Assets<Image>>,
     map_configs: Res<Persistent<MapConfigs>>,
 ) {
+    if map_configs.draw_mode == DrawMode::EndlessTerrain {
+        return;
+    }
+
     let render_assets = create_render_assets(&map_configs);
     let texture_handle = images.add(render_assets.texture);
     let mesh_handle = meshes.add(render_assets.mesh);
@@ -205,6 +238,7 @@ fn refresh_noise_plane(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    ground_plane_entities: Query<Entity, With<GroundPlane>>,
     mut ground_plane_query: Query<
         (
             Entity,
@@ -215,12 +249,33 @@ fn refresh_noise_plane(
         With<GroundPlane>,
     >,
 ) {
-    let Ok((entity, mut mesh_handle, mut material_handle, mut transform)) = ground_plane_query.single_mut()
-    else {
+    if map_configs.draw_mode == DrawMode::EndlessTerrain {
+        for entity in &ground_plane_entities {
+            commands.entity(entity).despawn();
+        }
         return;
-    };
+    }
 
     let render_assets = create_render_assets(&map_configs);
+
+    let Ok((entity, mut mesh_handle, mut material_handle, mut transform)) = ground_plane_query.single_mut() else {
+        let texture_handle = images.add(render_assets.texture);
+        let mesh_handle = meshes.add(render_assets.mesh);
+        let mut entity_commands = commands.spawn((
+            GroundPlane,
+            Name::new("GroundPlane"),
+            Mesh3d(mesh_handle),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color_texture: Some(texture_handle),
+                perceptual_roughness: 1.0,
+                ..default()
+            })),
+            Transform::from_xyz(0.0, render_assets.vertical_offset, 0.0),
+        ));
+
+        apply_wireframe_debug(&mut entity_commands, render_assets.show_wireframe);
+        return;
+    };
 
     *mesh_handle = Mesh3d(meshes.add(render_assets.mesh));
 
