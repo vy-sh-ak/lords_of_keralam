@@ -1,9 +1,11 @@
 use super::{
-    MeshGenerator,
-    perlin_map_texture::{texture_from_color_map, texture_from_height_map, ColorMap},
-    DrawMode, MapConfigs, TerrainType,
+    DrawMode, MapConfigs, MeshGenerator, TerrainType,
+    perlin_map_texture::{texture_from_color_map, texture_from_height_map},
 };
-use crate::{persistence, terrain::MapConfigPersistencePlugin};
+use crate::{
+    persistence,
+    terrain::{FallOffGenerator, MapConfigPersistencePlugin, fall_off_generator},
+};
 use bevy::{
     pbr::wireframe::{Wireframe, WireframeColor},
     prelude::*,
@@ -50,65 +52,66 @@ impl Plugin for PerlinMapPlugin {
 }
 
 fn create_render_assets(map_configs: &MapConfigs) -> RenderAssets {
-    let noise_map = generate_noise_map(map_configs);
+    let map_data = generate_map_data(map_configs, IVec2::ZERO);
 
     match map_configs.draw_mode {
         DrawMode::NoiseMap => RenderAssets {
             mesh: create_plane_mesh(map_configs),
-            texture: texture_from_height_map(&noise_map),
+            texture: texture_from_height_map(&map_data.noise_map),
             vertical_offset: -0.01,
             show_wireframe: false,
         },
         DrawMode::ColorMap => {
-            let color_map = build_color_map(&noise_map, &map_configs.regions);
             RenderAssets {
                 mesh: create_plane_mesh(map_configs),
-                texture: texture_from_color_map(&color_map),
+                texture: texture_from_color_map(&map_data.color_map),
                 vertical_offset: -0.01,
                 show_wireframe: false,
             }
         }
         DrawMode::Mesh => {
-            let color_map = build_color_map(&noise_map, &map_configs.regions);
             RenderAssets {
                 mesh: MeshGenerator::generate_terrain_mesh(
-                    &noise_map,
+                    &map_data.noise_map,
                     map_configs.height_multiplier,
                     &map_configs.height_curve,
                     map_configs.level_of_detail,
                 )
                 .create_mesh(),
-                texture: texture_from_color_map(&color_map),
+                texture: texture_from_color_map(&map_data.color_map),
                 vertical_offset: 0.0,
                 show_wireframe: map_configs.show_uv_wireframe,
             }
         }
         DrawMode::EndlessTerrain => RenderAssets {
             mesh: create_plane_mesh(map_configs),
-            texture: texture_from_height_map(&noise_map),
+            texture: texture_from_height_map(&map_data.noise_map),
             vertical_offset: -0.01,
             show_wireframe: false,
         },
+        DrawMode::FallOffMap => {
+            let fall_off_map =
+                FallOffGenerator::generate_fall_off_map(map_configs.map_chunk_size as usize);
+            RenderAssets {
+                mesh: create_plane_mesh(map_configs),
+                texture: texture_from_height_map(&fall_off_map),
+                vertical_offset: -0.01,
+                show_wireframe: false,
+            }
+        }
     }
 }
 
 fn create_plane_mesh(map_configs: &MapConfigs) -> Mesh {
     Plane3d::default()
         .mesh()
-        .size(map_configs.map_chunk_size as f32, map_configs.map_chunk_size as f32)
-    .into()
+        .size(
+            map_configs.map_chunk_size as f32,
+            map_configs.map_chunk_size as f32,
+        )
+        .into()
 }
 
-pub(crate) fn build_color_map(noise_map: &[Vec<f32>], regions: &[TerrainType]) -> ColorMap {
-    noise_map
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|&height_value| terrain_color_for_height(height_value, regions))
-                .collect()
-        })
-        .collect()
-}
 
 fn terrain_color_for_height(height_value: f32, regions: &[TerrainType]) -> [u8; 4] {
     for region in regions {
@@ -121,12 +124,25 @@ fn terrain_color_for_height(height_value: f32, regions: &[TerrainType]) -> [u8; 
     [0, 0, 0, 255]
 }
 
-pub(crate) fn generate_noise_map(map_configs: &MapConfigs) -> Vec<Vec<f32>> {
-    generate_noise_map_for_chunk(map_configs, IVec2::ZERO)
-}
-
 pub(crate) fn chunk_span(map_configs: &MapConfigs) -> f32 {
     map_configs.map_chunk_size.saturating_sub(1).max(1) as f32
+}
+
+pub(crate) fn generate_map_data(map_configs: &MapConfigs, coord: IVec2) -> MapData {
+    let mut noise_map = generate_noise_map_for_chunk(map_configs, coord);
+    let size = map_configs.map_chunk_size as usize;
+    let mut color_map = vec![vec![]; size];
+    for y in 0..size {
+        for x in 0..size {
+            if map_configs.use_falloff_map {
+                noise_map[y][x] = (noise_map[y][x] - map_configs.falloff_map[y][x]).clamp(0.0, 1.0);
+            }
+            let height_value = noise_map[y][x];
+            let color = terrain_color_for_height(height_value, map_configs.regions.as_slice());
+            color_map[y].push(color);
+        }
+    }
+    MapData::new(noise_map, color_map)
 }
 
 pub(crate) fn generate_noise_map_for_chunk(
@@ -155,8 +171,10 @@ pub(crate) fn generate_noise_map_for_chunk(
             let mut noise_height = 0.0;
 
             for &(offset_x, offset_y) in &octave_offsets {
-                let sample_x = ((chunk_offset_x + x as f64 - half_width) / scale) * frequency + offset_x;
-                let sample_y = ((chunk_offset_y - y as f64 + half_height) / scale) * frequency + offset_y;
+                let sample_x =
+                    ((chunk_offset_x + x as f64 - half_width) / scale) * frequency + offset_x;
+                let sample_y =
+                    ((chunk_offset_y - y as f64 + half_height) / scale) * frequency + offset_y;
 
                 let perlin_value = perlin.get([sample_x, sample_y]);
                 noise_height += perlin_value * amplitude;
@@ -207,12 +225,12 @@ fn setup_noise_plane(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    map_configs: Res<Persistent<MapConfigs>>,
+    mut map_configs: ResMut<Persistent<MapConfigs>>,
 ) {
     if map_configs.draw_mode == DrawMode::EndlessTerrain {
         return;
     }
-
+    let map_configs_b = map_configs.sanitized();
     let render_assets = create_render_assets(&map_configs);
     let texture_handle = images.add(render_assets.texture);
     let mesh_handle = meshes.add(render_assets.mesh);
@@ -228,7 +246,9 @@ fn setup_noise_plane(
         })),
         Transform::from_xyz(0.0, render_assets.vertical_offset, 0.0),
     ));
-
+    map_configs.set_falloff_map(fall_off_generator::FallOffGenerator::generate_fall_off_map(
+        map_configs_b.map_chunk_size as usize,
+    ));
     apply_wireframe_debug(&mut entity_commands, render_assets.show_wireframe);
 }
 
@@ -258,7 +278,9 @@ fn refresh_noise_plane(
 
     let render_assets = create_render_assets(&map_configs);
 
-    let Ok((entity, mut mesh_handle, mut material_handle, mut transform)) = ground_plane_query.single_mut() else {
+    let Ok((entity, mut mesh_handle, mut material_handle, mut transform)) =
+        ground_plane_query.single_mut()
+    else {
         let texture_handle = images.add(render_assets.texture);
         let mesh_handle = meshes.add(render_assets.mesh);
         let mut entity_commands = commands.spawn((
@@ -302,5 +324,19 @@ fn apply_wireframe_debug(entity_commands: &mut EntityCommands, show_wireframe: b
     } else {
         entity_commands.remove::<Wireframe>();
         entity_commands.remove::<WireframeColor>();
+    }
+}
+
+pub struct MapData {
+    pub noise_map: Vec<Vec<f32>>,
+    pub color_map: Vec<Vec<[u8; 4]>>,
+}
+
+impl MapData {
+    pub fn new(noise_map: Vec<Vec<f32>>, color_map: Vec<Vec<[u8; 4]>>) -> Self {
+        Self {
+            noise_map,
+            color_map,
+        }
     }
 }

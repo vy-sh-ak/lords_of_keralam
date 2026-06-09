@@ -24,6 +24,9 @@ pub struct MapConfigs {
     #[serde(default = "default_endless_lod_bands")]
     pub endless_lod_bands: Vec<EndlessTerrainLodBand>,
     pub regions: Vec<TerrainType>,
+
+    pub use_falloff_map: bool,
+    pub falloff_map: Vec<Vec<f32>>,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DrawMode {
@@ -31,10 +34,11 @@ pub enum DrawMode {
     ColorMap,
     Mesh,
     EndlessTerrain,
+    FallOffMap
 }
 
 impl DrawMode {
-    pub const ALL: [Self; 4] = [Self::NoiseMap, Self::ColorMap, Self::Mesh, Self::EndlessTerrain];
+    pub const ALL: [Self; 5] = [Self::NoiseMap, Self::ColorMap, Self::Mesh, Self::EndlessTerrain, Self::FallOffMap];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -42,6 +46,7 @@ impl DrawMode {
             Self::ColorMap => "Color Map",
             Self::Mesh => "Mesh",
             Self::EndlessTerrain => "Endless Terrain",
+            Self::FallOffMap => "Fall-Off Map",
         }
     }
 }
@@ -103,6 +108,8 @@ impl Default for MapConfigs {
             height_curve: HeightCurve::default(),
             endless_lod_bands: default_endless_lod_bands(),
             regions: vec![],
+            use_falloff_map: false,
+            falloff_map: vec![],
         }
     }
 }
@@ -152,6 +159,12 @@ impl MapConfigs {
                 defaults.regions
             } else {
                 self.regions.clone()
+            },
+            use_falloff_map: self.use_falloff_map,
+            falloff_map: if self.falloff_map.is_empty() {
+                defaults.falloff_map
+            } else {
+                self.falloff_map.clone()
             },
         }
     }
@@ -518,6 +531,24 @@ impl MapConfigs {
         }
 
         region.color = color;
+        true
+    }
+
+    pub fn set_use_falloff_map(&mut self, use_falloff_map: bool) -> bool {
+        if self.use_falloff_map == use_falloff_map {
+            return false;
+        }
+
+        self.use_falloff_map = use_falloff_map;
+        true
+    }
+
+    pub fn set_falloff_map(&mut self, falloff_map: Vec<Vec<f32>>) -> bool {
+        if self.falloff_map == falloff_map {
+            return false;
+        }
+
+        self.falloff_map = falloff_map;
         true
     }
 }

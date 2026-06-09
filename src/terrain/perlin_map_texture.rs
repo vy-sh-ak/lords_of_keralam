@@ -5,8 +5,6 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-pub type ColorMap = Vec<Vec<[u8; 4]>>;
-
 pub fn texture_from_color_map(color_map: &[Vec<[u8; 4]>]) -> Image {
     let height = color_map.len() as u32;
     let width = color_map.first().map_or(0, |row| row.len()) as u32;

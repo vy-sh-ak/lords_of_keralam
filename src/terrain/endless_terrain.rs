@@ -6,11 +6,13 @@ use bevy::{
 };
 use bevy_persistent::Persistent;
 
-use crate::camera_plugin::{CameraSettings, CameraSystems};
+use crate::{
+    camera_plugin::{CameraSettings, CameraSystems},
+    terrain::generate_map_data,
+};
 
 use super::{
-    DrawMode, EndlessTerrainLodBand, MapConfigs, MeshGenerator,
-    build_color_map, chunk_span, generate_noise_map_for_chunk,
+    DrawMode, EndlessTerrainLodBand, MapConfigs, MeshGenerator, chunk_span,
     perlin_map_texture::texture_from_color_map,
 };
 
@@ -41,7 +43,10 @@ struct EndlessTerrainState {
 impl Plugin for EndlessTerrainPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(EndlessTerrainState::default())
-            .add_systems(Update, sync_endless_terrain.after(CameraSystems::UpdateState));
+            .add_systems(
+                Update,
+                sync_endless_terrain.after(CameraSystems::UpdateState),
+            );
     }
 }
 
@@ -54,14 +59,12 @@ fn sync_endless_terrain(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    mut chunk_query: Query<
-        (
-            Entity,
-            &EndlessTerrainChunk,
-            &mut Mesh3d,
-            &mut MeshMaterial3d<StandardMaterial>,
-        ),
-    >,
+    mut chunk_query: Query<(
+        Entity,
+        &EndlessTerrainChunk,
+        &mut Mesh3d,
+        &mut MeshMaterial3d<StandardMaterial>,
+    )>,
 ) {
     if map_configs.draw_mode != DrawMode::EndlessTerrain {
         for (entity, _, _, _) in &mut chunk_query {
@@ -79,7 +82,8 @@ fn sync_endless_terrain(
     let camera_position = camera_transform.translation;
     let viewer_position = camera_settings.focus.xz();
     let viewer_chunk = world_to_chunk_coord(viewer_position, chunk_span);
-    let view_radius = visible_radius_from_camera(camera_position, camera_settings.focus, chunk_span);
+    let view_radius =
+        visible_radius_from_camera(camera_position, camera_settings.focus, chunk_span);
     let max_visible_distance = map_configs.max_endless_visible_distance().min(view_radius);
     let chunk_radius = ((max_visible_distance / chunk_span).ceil() as i32).max(1) + 1;
     let desired_chunks = collect_desired_chunks(
@@ -112,12 +116,14 @@ fn sync_endless_terrain(
         let lod = desired_chunk.level_of_detail;
 
         if let Some(entity) = state.active_chunks.get(&coord).copied() {
-            let Ok((_, chunk, mut mesh_handle, mut material_handle)) = chunk_query.get_mut(entity) else {
+            let Ok((_, chunk, mut mesh_handle, mut material_handle)) = chunk_query.get_mut(entity)
+            else {
                 state.active_chunks.remove(&coord);
                 continue;
             };
 
-            let needs_rebuild = chunk.level_of_detail != lod || chunk.terrain_epoch != state.terrain_epoch;
+            let needs_rebuild =
+                chunk.level_of_detail != lod || chunk.terrain_epoch != state.terrain_epoch;
             if needs_rebuild && remaining_build_budget > 0 {
                 let (mesh, texture) = build_chunk_assets(&map_configs, coord, lod);
                 *mesh_handle = Mesh3d(meshes.add(mesh));
@@ -153,7 +159,11 @@ fn sync_endless_terrain(
                     perceptual_roughness: 1.0,
                     ..default()
                 })),
-                Transform::from_xyz(coord.x as f32 * chunk_span, 0.0, coord.y as f32 * chunk_span),
+                Transform::from_xyz(
+                    coord.x as f32 * chunk_span,
+                    0.0,
+                    coord.y as f32 * chunk_span,
+                ),
             ));
             apply_wireframe_debug(&mut entity_commands, map_configs.show_uv_wireframe);
             let entity = entity_commands.id();
@@ -200,17 +210,20 @@ fn collect_desired_chunks(
     desired_chunks
 }
 
-fn build_chunk_assets(map_configs: &MapConfigs, coord: IVec2, level_of_detail: u32) -> (Mesh, Image) {
-    let noise_map = generate_noise_map_for_chunk(map_configs, coord);
-    let color_map = build_color_map(&noise_map, &map_configs.regions);
+fn build_chunk_assets(
+    map_configs: &MapConfigs,
+    coord: IVec2,
+    level_of_detail: u32,
+) -> (Mesh, Image) {
+    let map_data = generate_map_data(map_configs, coord);
     let mesh = MeshGenerator::generate_terrain_mesh(
-        &noise_map,
+        &map_data.noise_map,
         map_configs.height_multiplier,
         &map_configs.height_curve,
         level_of_detail,
     )
     .create_mesh();
-    let texture = texture_from_color_map(&color_map);
+    let texture = texture_from_color_map(&map_data.color_map);
 
     (mesh, texture)
 }

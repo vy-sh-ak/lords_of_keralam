@@ -228,7 +228,7 @@ impl ScalarEditorField {
             Self::RegionsCount => "Region Count",
         }
     }
-
+    // to make the more field disabled; add here
     fn is_read_only(self) -> bool {
         matches!(self, Self::MapChunkSize)
     }
@@ -601,6 +601,7 @@ fn render_draw_mode_row(
     }
 
     render_uv_wireframe_row(ui, map_configs, autosave);
+    render_use_falloff_map_row(ui, map_configs, autosave);
 }
 
 fn render_height_curve_section(
@@ -706,6 +707,25 @@ fn render_uv_wireframe_row(
     ui.end_row();
 
     if enabled && map_configs.get_mut().set_show_uv_wireframe(show_uv_wireframe) {
+        autosave.mark_dirty();
+    }
+}
+fn render_use_falloff_map_row(
+    ui: &mut egui::Ui,
+    map_configs: &mut Persistent<MapConfigs>,
+    autosave: &mut MapConfigAutosave,
+) {
+    let enabled = matches!(map_configs.draw_mode, DrawMode::Mesh | DrawMode::EndlessTerrain);
+    let mut use_falloff_map = map_configs.use_falloff_map;
+
+    ui.label("Use Falloff Map");
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.checkbox(&mut use_falloff_map, "");
+    });
+    ui.label("");
+    ui.end_row();
+
+    if enabled && map_configs.get_mut().set_use_falloff_map(use_falloff_map) {
         autosave.mark_dirty();
     }
 }
