@@ -28,6 +28,62 @@ struct RenderAssets {
 #[derive(Component)]
 struct GroundPlane;
 
+#[derive(Resource)]
+pub struct TerrainSampler {
+    perlin: Perlin,
+}
+impl Default for TerrainSampler {
+    fn default() -> Self {
+        Self {
+            perlin: Perlin::new(0),
+        }
+    }
+}
+impl TerrainSampler {
+    pub fn sample_noise(&self, map_configs: &MapConfigs, world_x: f64, world_z: f64) -> f32 {
+        let octaves = map_configs.octaves.max(1) as usize;
+
+        let octave_offsets = build_octave_offsets(map_configs, octaves);
+
+        let scale = map_configs.scale.max(0.0001);
+
+        let max_possible_height = max_possible_noise_height(map_configs, octaves);
+
+        let mut amplitude = 1.0;
+        let mut frequency = map_configs.frequency.max(0.0001);
+
+        let mut noise_height = 0.0;
+
+        for &(offset_x, offset_y) in &octave_offsets {
+            let sample_x = (world_x / scale) * frequency + offset_x;
+
+            let sample_y = (world_z / scale) * frequency + offset_y;
+
+            let perlin_value = self.perlin.get([sample_x, sample_y]);
+
+            noise_height += perlin_value * amplitude;
+
+            amplitude *= map_configs.persistence;
+            frequency *= map_configs.lacunarity;
+        }
+
+        if max_possible_height <= f64::EPSILON {
+            return 0.0;
+        }
+
+        (((noise_height + max_possible_height) / (max_possible_height * 2.0)).clamp(0.0, 1.0))
+            as f32
+    }
+
+    pub fn sample_height(&self, map_configs: &MapConfigs, world_x: f32, world_z: f32) -> f32 {
+        let noise = self.sample_noise(map_configs, world_x as f64, world_z as f64);
+
+        let curved_height = map_configs.height_curve.sample(noise);
+
+        curved_height * map_configs.height_multiplier
+    }
+}
+
 impl Plugin for PerlinMapPlugin {
     fn build(&self, app: &mut App) {
         let persistence = persistence::PersistenceConfig::new("map_configs");
@@ -42,6 +98,7 @@ impl Plugin for PerlinMapPlugin {
         }
 
         app.insert_resource(map_configs)
+            .insert_resource(TerrainSampler::default())
             .add_plugins(MapConfigPersistencePlugin)
             .add_systems(Startup, setup_noise_plane)
             .add_systems(
@@ -51,8 +108,8 @@ impl Plugin for PerlinMapPlugin {
     }
 }
 
-fn create_render_assets(map_configs: &MapConfigs) -> RenderAssets {
-    let map_data = generate_map_data(map_configs, IVec2::ZERO);
+fn create_render_assets(map_configs: &MapConfigs, terrain_sampler: &TerrainSampler) -> RenderAssets {
+    let map_data = generate_map_data(map_configs, terrain_sampler, IVec2::ZERO);
 
     match map_configs.draw_mode {
         DrawMode::NoiseMap => RenderAssets {
@@ -61,28 +118,24 @@ fn create_render_assets(map_configs: &MapConfigs) -> RenderAssets {
             vertical_offset: -0.01,
             show_wireframe: false,
         },
-        DrawMode::ColorMap => {
-            RenderAssets {
-                mesh: create_plane_mesh(map_configs),
-                texture: texture_from_color_map(&map_data.color_map),
-                vertical_offset: -0.01,
-                show_wireframe: false,
-            }
-        }
-        DrawMode::Mesh => {
-            RenderAssets {
-                mesh: MeshGenerator::generate_terrain_mesh(
-                    &map_data.noise_map,
-                    map_configs.height_multiplier,
-                    &map_configs.height_curve,
-                    map_configs.level_of_detail,
-                )
-                .create_mesh(),
-                texture: texture_from_color_map(&map_data.color_map),
-                vertical_offset: 0.0,
-                show_wireframe: map_configs.show_uv_wireframe,
-            }
-        }
+        DrawMode::ColorMap => RenderAssets {
+            mesh: create_plane_mesh(map_configs),
+            texture: texture_from_color_map(&map_data.color_map),
+            vertical_offset: -0.01,
+            show_wireframe: false,
+        },
+        DrawMode::Mesh => RenderAssets {
+            mesh: MeshGenerator::generate_terrain_mesh(
+                &map_data.noise_map,
+                map_configs.height_multiplier,
+                &map_configs.height_curve,
+                map_configs.level_of_detail,
+            )
+            .create_mesh(),
+            texture: texture_from_color_map(&map_data.color_map),
+            vertical_offset: 0.0,
+            show_wireframe: map_configs.show_uv_wireframe,
+        },
         DrawMode::EndlessTerrain => RenderAssets {
             mesh: create_plane_mesh(map_configs),
             texture: texture_from_height_map(&map_data.noise_map),
@@ -112,7 +165,6 @@ fn create_plane_mesh(map_configs: &MapConfigs) -> Mesh {
         .into()
 }
 
-
 fn terrain_color_for_height(height_value: f32, regions: &[TerrainType]) -> [u8; 4] {
     for region in regions {
         if (height_value as f64) <= region.height {
@@ -128,8 +180,8 @@ pub(crate) fn chunk_span(map_configs: &MapConfigs) -> f32 {
     map_configs.map_chunk_size.saturating_sub(1).max(1) as f32
 }
 
-pub(crate) fn generate_map_data(map_configs: &MapConfigs, coord: IVec2) -> MapData {
-    let mut noise_map = generate_noise_map_for_chunk(map_configs, coord);
+pub(crate) fn generate_map_data(map_configs: &MapConfigs, terrain_sampler: &TerrainSampler, coord: IVec2) -> MapData {
+    let mut noise_map = generate_noise_map_for_chunk(map_configs, terrain_sampler, coord);
     let size = map_configs.map_chunk_size as usize;
     let mut color_map = vec![vec![]; size];
     for y in 0..size {
@@ -147,53 +199,30 @@ pub(crate) fn generate_map_data(map_configs: &MapConfigs, coord: IVec2) -> MapDa
 
 pub(crate) fn generate_noise_map_for_chunk(
     map_configs: &MapConfigs,
+    terrain_sampler: &TerrainSampler,
     chunk_coord: IVec2,
 ) -> Vec<Vec<f32>> {
     let width = map_configs.map_chunk_size as usize + 2;
     let height = map_configs.map_chunk_size as usize + 2;
-    let scale = map_configs.scale.max(0.0001);
-    let octaves = map_configs.octaves.max(1) as usize;
     let half_width = map_configs.map_chunk_size as f64 / 2.0;
     let half_height = map_configs.map_chunk_size as f64 / 2.0;
-    let perlin = Perlin::new(0);
-    let octave_offsets = build_octave_offsets(map_configs, octaves);
     let chunk_span = map_configs.map_chunk_size.saturating_sub(1) as f64;
     let chunk_offset_x = chunk_coord.x as f64 * chunk_span;
     let chunk_offset_y = chunk_coord.y as f64 * chunk_span;
-    let max_possible_height = max_possible_noise_height(map_configs, octaves);
 
     let mut noise_map = vec![vec![0.0_f32; width]; height];
 
     for y in 0..height {
         for x in 0..width {
-            let mut amplitude = 1.0;
-            let mut frequency = map_configs.frequency.max(0.0001);
-            let mut noise_height = 0.0;
-
-            for &(offset_x, offset_y) in &octave_offsets {
-                let sample_x =
-                    ((chunk_offset_x + x as f64 - half_width) / scale) * frequency + offset_x;
-                let sample_y =
-                    ((chunk_offset_y - y as f64 + half_height) / scale) * frequency + offset_y;
-
-                let perlin_value = perlin.get([sample_x, sample_y]);
-                noise_height += perlin_value * amplitude;
-
-                amplitude *= map_configs.persistence;
-                frequency *= map_configs.lacunarity;
-            }
-
-            noise_map[y][x] = if max_possible_height <= f64::EPSILON {
-                0.0
-            } else {
-                (((noise_height + max_possible_height) / (max_possible_height * 2.0))
-                    .clamp(0.0, 1.0)) as f32
-            };
+            let world_x = chunk_offset_x + x as f64 - half_width;
+            let world_z = chunk_offset_y - y as f64 + half_height;
+            noise_map[y][x] = terrain_sampler.sample_noise(map_configs, world_x, world_z);
         }
     }
 
     noise_map
 }
+
 
 fn build_octave_offsets(map_configs: &MapConfigs, octaves: usize) -> Vec<(f64, f64)> {
     let mut rng = StdRng::seed_from_u64(map_configs.seed as u64);
@@ -226,12 +255,13 @@ fn setup_noise_plane(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut map_configs: ResMut<Persistent<MapConfigs>>,
+    terrain_sampler: Res<TerrainSampler>,
 ) {
     if map_configs.draw_mode == DrawMode::EndlessTerrain {
         return;
     }
     let map_configs_b = map_configs.sanitized();
-    let render_assets = create_render_assets(&map_configs);
+    let render_assets = create_render_assets(&map_configs, terrain_sampler.as_ref());
     let texture_handle = images.add(render_assets.texture);
     let mesh_handle = meshes.add(render_assets.mesh);
 
@@ -268,6 +298,7 @@ fn refresh_noise_plane(
         ),
         With<GroundPlane>,
     >,
+    terrain_sampler: Res<TerrainSampler>,
 ) {
     if map_configs.draw_mode == DrawMode::EndlessTerrain {
         for entity in &ground_plane_entities {
@@ -276,7 +307,7 @@ fn refresh_noise_plane(
         return;
     }
 
-    let render_assets = create_render_assets(&map_configs);
+    let render_assets = create_render_assets(&map_configs, terrain_sampler.as_ref());
 
     let Ok((entity, mut mesh_handle, mut material_handle, mut transform)) =
         ground_plane_query.single_mut()

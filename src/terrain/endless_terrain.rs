@@ -8,7 +8,7 @@ use bevy_persistent::Persistent;
 
 use crate::{
     camera_plugin::{CameraSettings, CameraSystems},
-    terrain::generate_map_data,
+    terrain::{TerrainSampler, generate_map_data},
 };
 
 use super::{
@@ -45,8 +45,54 @@ impl Plugin for EndlessTerrainPlugin {
         app.insert_resource(EndlessTerrainState::default())
             .add_systems(
                 Update,
-                sync_endless_terrain.after(CameraSystems::UpdateState),
+                (
+                    sync_endless_terrain.after(CameraSystems::UpdateState),
+                    update_focus_height,
+                ),
             );
+    }
+}
+
+fn update_focus_height(
+    terrain_sampler: Res<TerrainSampler>,
+    map_configs: Res<Persistent<MapConfigs>>,
+    mut camera_settings: ResMut<CameraSettings>,
+    time: Res<Time>,
+) {
+    let forward = Vec2::new(
+        -camera_settings.orbit_yaw.cos(),
+        -camera_settings.orbit_yaw.sin(),
+    );
+    let mut highest = f32::MIN;
+
+for distance in [5.0, 10.0, 15.0, 20.0] {
+    let pos =
+        camera_settings.focus_xz
+        + forward * distance;
+
+    let h =
+        terrain_sampler.sample_height(
+            &map_configs,
+            pos.x,
+            pos.y,
+        );
+
+    highest = highest.max(h);
+}
+
+    let desired_clearance = 6.0;
+    let target_height = highest + desired_clearance;
+
+    if target_height > camera_settings.focus_height {
+        // climb fast
+        camera_settings.focus_height = camera_settings
+            .focus_height
+            .lerp(target_height, time.delta_secs() * 15.0);
+    } else {
+        // descend slowly
+        camera_settings.focus_height = camera_settings
+            .focus_height
+            .lerp(target_height, time.delta_secs() * 2.0);
     }
 }
 
@@ -65,6 +111,7 @@ fn sync_endless_terrain(
         &mut Mesh3d,
         &mut MeshMaterial3d<StandardMaterial>,
     )>,
+    terrain_sampler: Res<TerrainSampler>,
 ) {
     if map_configs.draw_mode != DrawMode::EndlessTerrain {
         for (entity, _, _, _) in &mut chunk_query {
@@ -80,10 +127,14 @@ fn sync_endless_terrain(
 
     let chunk_span = chunk_span(&map_configs);
     let camera_position = camera_transform.translation;
-    let viewer_position = camera_settings.focus.xz();
+    let viewer_position = camera_settings.focus_xz;
     let viewer_chunk = world_to_chunk_coord(viewer_position, chunk_span);
-    let view_radius =
-        visible_radius_from_camera(camera_position, camera_settings.focus, chunk_span);
+    let focus = Vec3::new(
+        camera_settings.focus_xz.x,
+        camera_settings.focus_height,
+        camera_settings.focus_xz.y,
+    );
+    let view_radius = visible_radius_from_camera(camera_position, focus, chunk_span);
     let max_visible_distance = map_configs.max_endless_visible_distance().min(view_radius);
     let chunk_radius = ((max_visible_distance / chunk_span).ceil() as i32).max(1) + 1;
     let desired_chunks = collect_desired_chunks(
@@ -125,7 +176,8 @@ fn sync_endless_terrain(
             let needs_rebuild =
                 chunk.level_of_detail != lod || chunk.terrain_epoch != state.terrain_epoch;
             if needs_rebuild && remaining_build_budget > 0 {
-                let (mesh, texture) = build_chunk_assets(&map_configs, coord, lod);
+                let (mesh, texture) =
+                    build_chunk_assets(&map_configs, coord, lod, terrain_sampler.as_ref());
                 *mesh_handle = Mesh3d(meshes.add(mesh));
                 *material_handle = MeshMaterial3d(materials.add(StandardMaterial {
                     base_color_texture: Some(images.add(texture)),
@@ -146,7 +198,8 @@ fn sync_endless_terrain(
                 continue;
             }
 
-            let (mesh, texture) = build_chunk_assets(&map_configs, coord, lod);
+            let (mesh, texture) =
+                build_chunk_assets(&map_configs, coord, lod, terrain_sampler.as_ref());
             let mut entity_commands = commands.spawn((
                 EndlessTerrainChunk {
                     level_of_detail: lod,
@@ -214,8 +267,9 @@ fn build_chunk_assets(
     map_configs: &MapConfigs,
     coord: IVec2,
     level_of_detail: u32,
+    terrain_sampler: &TerrainSampler,
 ) -> (Mesh, Image) {
-    let map_data = generate_map_data(map_configs, coord);
+    let map_data = generate_map_data(map_configs, terrain_sampler, coord);
     let mesh = MeshGenerator::generate_terrain_mesh(
         &map_data.noise_map,
         map_configs.height_multiplier,

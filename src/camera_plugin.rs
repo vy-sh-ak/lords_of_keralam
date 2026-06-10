@@ -8,7 +8,6 @@ use bevy::{
 use crate::ui_editor::UIKeyboardCapture;
 use crate::world_direction::WorldDirection;
 
-const FOCUS_DEFAULTS: Vec3 = Vec3::new(3.0, 6.0, 3.0);
 const DEFAULT_ORBIT_PITCH: f32 = 0.0;
 
 #[derive(Debug, Resource)]
@@ -21,7 +20,8 @@ pub struct CameraSettings {
     pub max_distance: f32,
     pub min_elevation: f32,
     pub max_elevation: f32,
-    pub focus: Vec3,
+    pub focus_xz: Vec2,
+    pub focus_height: f32,
     pub move_speed_zoomed_in: f32,
     pub move_speed_zoomed_out: f32,
     pub orbit_yaw: f32,
@@ -48,8 +48,9 @@ impl Plugin for CameraPlugin {
             max_distance: 500.0,
             min_elevation: 0.0,
             max_elevation: PI / 2.0 - 0.05,
-            focus: FOCUS_DEFAULTS,
-            move_speed_zoomed_in: 10.0,
+            focus_xz: Vec2::new(3.0, 3.0),
+            focus_height: 6.0,
+            move_speed_zoomed_in: 50.0,
             move_speed_zoomed_out: 200.0,
             orbit_yaw: PI / 4.0,
             orbit_pitch: DEFAULT_ORBIT_PITCH,
@@ -80,7 +81,10 @@ fn move_focus(
     keyboard_capture: Option<Res<UIKeyboardCapture>>,
     mut camera_settings: ResMut<CameraSettings>,
 ) {
-    if keyboard_capture.as_ref().is_some_and(|capture| capture.is_typing) {
+    if keyboard_capture
+        .as_ref()
+        .is_some_and(|capture| capture.is_typing)
+    {
         return;
     }
 
@@ -125,8 +129,9 @@ fn move_focus(
         + (camera_settings.move_speed_zoomed_in - camera_settings.move_speed_zoomed_out) * t)
         * speed_multiplier;
 
-    camera_settings.focus += movement * movement_speed * time.delta_secs();
-    camera_settings.focus.y = FOCUS_DEFAULTS.y;
+    let delta = movement * movement_speed * time.delta_secs();
+
+    camera_settings.focus_xz += delta.xz();
 }
 
 fn zoom(
@@ -183,7 +188,11 @@ fn zoom(
     )
     .normalize();
 
-    let target = camera_settings.focus;
+    let target = Vec3::new(
+        camera_settings.focus_xz.x,
+        camera_settings.focus_height,
+        camera_settings.focus_xz.y,
+    );
 
     let mut transform = camera.into_inner();
     let new_translation = target + yaw_direction * horizontal_dist + Vec3::Y * height;
