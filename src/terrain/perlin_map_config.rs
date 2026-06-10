@@ -92,7 +92,7 @@ impl Default for TerrainType {
 impl Default for MapConfigs {
     fn default() -> Self {
         Self {
-            map_chunk_size: 241,
+            map_chunk_size: 239,
             level_of_detail: 0,
             scale: 4.0,
             octaves: 5,

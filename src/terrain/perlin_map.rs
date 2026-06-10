@@ -32,7 +32,7 @@ impl Plugin for PerlinMapPlugin {
     fn build(&self, app: &mut App) {
         let persistence = persistence::PersistenceConfig::new("map_configs");
         let mut map_configs =
-            persistence.get_resource::<MapConfigs>("map configs", "map_configs.bin");
+            persistence.get_resource::<MapConfigs>("map configs", "map_configs.toml");
         let sanitized_map_configs = map_configs.sanitized();
 
         if *map_configs != sanitized_map_configs {
@@ -149,8 +149,8 @@ pub(crate) fn generate_noise_map_for_chunk(
     map_configs: &MapConfigs,
     chunk_coord: IVec2,
 ) -> Vec<Vec<f32>> {
-    let width = map_configs.map_chunk_size as usize;
-    let height = map_configs.map_chunk_size as usize;
+    let width = map_configs.map_chunk_size as usize + 2;
+    let height = map_configs.map_chunk_size as usize + 2;
     let scale = map_configs.scale.max(0.0001);
     let octaves = map_configs.octaves.max(1) as usize;
     let half_width = map_configs.map_chunk_size as f64 / 2.0;

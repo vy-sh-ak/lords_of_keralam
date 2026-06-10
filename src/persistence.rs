@@ -46,7 +46,7 @@ impl PersistenceConfig {
         let build_resource = || {
             Persistent::<R>::builder()
                 .name(resource_name)
-                .format(StorageFormat::Bincode)
+                .format(StorageFormat::Toml)
                 .path(&path)
                 .default(R::default())
                 .build()
