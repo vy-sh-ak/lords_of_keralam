@@ -10,6 +10,7 @@ use bevy::{
     },
 };
 use bevy_egui::EguiPlugin;
+use bevy_inspector_egui::DefaultInspectorConfigPlugin;
 
 mod camera_plugin;
 mod compass;
@@ -31,6 +32,7 @@ fn main() {
             FrameTimeDiagnosticsPlugin::default(),
             EguiPlugin::default(),
             WireframePlugin::default(),
+            DefaultInspectorConfigPlugin,
         ))
         .insert_resource(WireframeConfig {
             global: false,
@@ -41,7 +43,6 @@ fn main() {
         .add_plugins(terrain::EndlessTerrainPlugin)
         .add_plugins(
             ui_editor::UIEditor::default()
-                .with_panel_title("UI Editor")
                 .with_toggle_key(KeyCode::F1)
                 .starts_open(true)
                 .plugin(),
@@ -53,6 +54,7 @@ fn main() {
         )
         .run();
 }
+
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -91,24 +93,6 @@ fn setup(
         brightness: 100.0,
         affects_lightmapped_meshes: true,
     });
-
-    // let font = fonts.add(Font::try_from_bytes(DEFAULT_FONT_DATA.to_vec()).unwrap());
-    // commands.spawn((
-    //     Text::new("FPS: -- (--)\nFrame: -- ms"),
-    //     TextFont {
-    //         font,
-    //         font_size: 18.0,
-    //         ..default()
-    //     },
-    //     TextColor(Color::WHITE),
-    //     Node {
-    //         position_type: PositionType::Absolute,
-    //         left: Val::Px(12.0),
-    //         top: Val::Px(12.0),
-    //         ..default()
-    //     },
-    //     terrain::FpsText,
-    // ));
 
     compass::spawn_compass(commands, asset_server);
 }

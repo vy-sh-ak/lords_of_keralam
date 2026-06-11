@@ -207,34 +207,39 @@ fn zoom(
 fn rotate_horizontal(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
+    keyboard_capture: Option<Res<UIKeyboardCapture>>,
     mut camera_settings: ResMut<CameraSettings>,
 ) {
-    if !mouse_buttons.pressed(MouseButton::Middle) {
-        return;
+    if mouse_buttons.pressed(MouseButton::Middle)
+        && !keyboard_capture
+            .as_ref()
+            .is_some_and(|c| c.wants_pointer_input)
+    {
+        let delta_x = mouse_motion.delta.x;
+        if delta_x != 0.0 {
+            camera_settings.orbit_yaw += delta_x * camera_settings.orbit_rotate_sensitivity;
+        }
     }
-    let delta_x = mouse_motion.delta.x;
-    if delta_x == 0.0 {
-        return;
-    }
-    camera_settings.orbit_yaw += delta_x * camera_settings.orbit_rotate_sensitivity;
 }
 
 fn rotate_vertical(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
+    keyboard_capture: Option<Res<UIKeyboardCapture>>,
     mut camera_settings: ResMut<CameraSettings>,
 ) {
-    if !mouse_buttons.pressed(MouseButton::Middle) {
-        return;
+    if mouse_buttons.pressed(MouseButton::Middle)
+        && !keyboard_capture
+            .as_ref()
+            .is_some_and(|c| c.wants_pointer_input)
+    {
+        let delta_y = mouse_motion.delta.y;
+        if delta_y != 0.0 && camera_settings.target_zoom >= 1.0 {
+            camera_settings.orbit_pitch = (camera_settings.orbit_pitch
+                + delta_y * camera_settings.vertical_rotate_sensitivity)
+                .clamp(-0.1, 1.0);
+        }
     }
-    let delta_y = mouse_motion.delta.y;
-    if delta_y == 0.0 || camera_settings.target_zoom < 1.0 {
-        return;
-    }
-
-    camera_settings.orbit_pitch = (camera_settings.orbit_pitch
-        + delta_y * camera_settings.vertical_rotate_sensitivity)
-        .clamp(-0.1, 1.0);
 }
 
 fn sync_world_direction(

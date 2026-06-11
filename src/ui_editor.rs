@@ -1,8 +1,17 @@
+use std::any::TypeId;
 use std::collections::HashMap;
 
+use bevy::camera::Viewport;
 use bevy::prelude::*;
-use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
+use bevy::window::{PrimaryWindow, Window};
+use bevy_egui::egui::{self, LayerId};
+use bevy_egui::{EguiPrimaryContextPass, PrimaryEguiContext};
+use bevy_inspector_egui::bevy_egui::EguiContextSettings;
+use bevy_inspector_egui::bevy_inspector::hierarchy::{SelectedEntities, hierarchy_ui};
+use bevy::reflect::TypeRegistry;
+use bevy_inspector_egui::bevy_inspector::{self, ui_for_entity_with_children};
 use bevy_persistent::Persistent;
+use egui_dock::{DockArea, DockState, NodeIndex, Style};
 
 use crate::terrain::{DrawMode, MapConfigAutosave, MapConfigs};
 
@@ -14,10 +23,12 @@ const GRID_ID: &str = "ui_editor_map_config_grid";
 const HEIGHT_CURVE_GRID_ID: &str = "ui_editor_height_curve_grid";
 const REGION_GRID_ID_PREFIX: &str = "ui_editor_region_grid";
 
+// ---------------------------------------------------------------------------
+// Public plugin config
+// ---------------------------------------------------------------------------
+
 #[derive(Resource, Clone)]
 pub struct UIEditor {
-    panel_id: String,
-    panel_title: String,
     toggle_key: KeyCode,
     starts_open: bool,
 }
@@ -25,8 +36,6 @@ pub struct UIEditor {
 impl Default for UIEditor {
     fn default() -> Self {
         Self {
-            panel_id: "ui_editor_panel".to_string(),
-            panel_title: "UI Editor".to_string(),
             toggle_key: KeyCode::F1,
             starts_open: true,
         }
@@ -47,22 +56,106 @@ impl UIEditor {
         self.starts_open = starts_open;
         self
     }
-
-    pub fn with_panel_title(mut self, panel_title: impl Into<String>) -> Self {
-        self.panel_title = panel_title.into();
-        self
-    }
 }
 
 pub struct UIEditorPlugin {
     editor: UIEditor,
 }
 
+// ---------------------------------------------------------------------------
+// Keyboard capture (consumed by camera_plugin)
+// ---------------------------------------------------------------------------
+
 #[derive(Resource, Default)]
 pub struct UIKeyboardCapture {
     pub is_typing: bool,
     pub wants_pointer_input: bool,
+    pub pointer_in_viewport: bool,
 }
+
+// ---------------------------------------------------------------------------
+// Dock tab identifiers
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum EguiWindow {
+    GameView,
+    Hierarchy,
+    TerrainConfig,
+    Inspector,
+    Resources,
+}
+
+// ---------------------------------------------------------------------------
+// Inspector selection state
+// ---------------------------------------------------------------------------
+
+#[derive(Eq, PartialEq)]
+enum InspectorSelection {
+    Entities,
+    Resource(TypeId, String),
+}
+
+// ---------------------------------------------------------------------------
+// Dock / editor state
+// ---------------------------------------------------------------------------
+
+#[derive(Resource)]
+pub struct UiState {
+    dock_state: DockState<EguiWindow>,
+    viewport_rect: egui::Rect,
+    selected_entities: SelectedEntities,
+    selection: InspectorSelection,
+    pointer_in_viewport: bool,
+    is_open: bool,
+}
+
+impl UiState {
+    fn new(starts_open: bool) -> Self {
+        let initial_tabs = if starts_open {
+            vec![
+                EguiWindow::GameView,
+                EguiWindow::Hierarchy,
+                EguiWindow::TerrainConfig,
+                EguiWindow::Inspector,
+                EguiWindow::Resources,
+            ]
+        } else {
+            vec![EguiWindow::GameView]
+        };
+
+        let mut dock_state = DockState::new(initial_tabs);
+
+        if starts_open {
+            let tree = dock_state.main_surface_mut();
+            // GameView takes most space; Inspector on the right
+            let [game, _inspector] =
+                tree.split_right(NodeIndex::root(), 0.75, vec![EguiWindow::Inspector]);
+            // Hierarchy on the left
+            let [game, _hierarchy] =
+                tree.split_left(game, 0.2, vec![EguiWindow::Hierarchy]);
+            // TerrainConfig and Resources at the bottom
+            let [_game, _bottom] = tree.split_below(
+                game,
+                0.7,
+                vec![EguiWindow::TerrainConfig, EguiWindow::Resources],
+            );
+        }
+
+        Self {
+            dock_state,
+            viewport_rect: egui::Rect::NOTHING,
+            selected_entities: SelectedEntities::default(),
+            selection: InspectorSelection::Entities,
+            pointer_in_viewport: false,
+            is_open: starts_open,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Field buffer (text input state for terrain config)
+// ---------------------------------------------------------------------------
 
 #[derive(Default)]
 struct FieldBuffer {
@@ -72,21 +165,16 @@ struct FieldBuffer {
 
 #[derive(Resource)]
 struct UIEditorState {
-    is_open: bool,
     field_buffers: HashMap<EditorField, FieldBuffer>,
 }
 
 impl UIEditorState {
-    fn from_editor(editor: &UIEditor) -> Self {
+    fn new() -> Self {
         let mut field_buffers = HashMap::new();
         for field in ScalarEditorField::ALL {
             field_buffers.insert(EditorField::Scalar(field), FieldBuffer::default());
         }
-
-        Self {
-            is_open: editor.starts_open,
-            field_buffers,
-        }
+        Self { field_buffers }
     }
 
     fn sync_from_map_configs(
@@ -102,14 +190,13 @@ impl UIEditorState {
             );
         }
 
-        self.field_buffers
-            .retain(|field, _| {
-                field.should_keep(
-                    map_configs.regions.len(),
-                    map_configs.height_curve.points.len(),
-                    map_configs.endless_lod_bands.len(),
-                )
-            });
+        self.field_buffers.retain(|field, _| {
+            field.should_keep(
+                map_configs.regions.len(),
+                map_configs.height_curve.points.len(),
+                map_configs.endless_lod_bands.len(),
+            )
+        });
 
         for index in 0..map_configs.height_curve.points.len() {
             self.sync_buffer(
@@ -132,7 +219,9 @@ impl UIEditorState {
             );
             self.sync_buffer(
                 EditorField::LodBandLevel(index),
-                map_configs.endless_lod_bands[index].level_of_detail.to_string(),
+                map_configs.endless_lod_bands[index]
+                    .level_of_detail
+                    .to_string(),
                 has_external_change,
             );
         }
@@ -177,11 +266,11 @@ impl UIEditorState {
             buffer.input = value;
         }
     }
-
-    fn is_any_field_focused(&self) -> bool {
-        self.field_buffers.values().any(|buffer| buffer.has_focus)
-    }
 }
+
+// ---------------------------------------------------------------------------
+// Scalar editor field
+// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ScalarEditorField {
@@ -228,7 +317,7 @@ impl ScalarEditorField {
             Self::RegionsCount => "Region Count",
         }
     }
-    // to make the more field disabled; add here
+
     fn is_read_only(self) -> bool {
         matches!(self, Self::MapChunkSize)
     }
@@ -287,60 +376,64 @@ impl ScalarEditorField {
                 .trim()
                 .parse::<u32>()
                 .ok()
-                .is_some_and(|value| map_configs.set_map_chunk_size(value)),
+                .is_some_and(|v| map_configs.set_map_chunk_size(v)),
             Self::LevelOfDetail => input
                 .trim()
                 .parse::<u32>()
                 .ok()
-                .is_some_and(|value| map_configs.set_level_of_detail(value)),
+                .is_some_and(|v| map_configs.set_level_of_detail(v)),
             Self::Scale => input
                 .trim()
                 .parse::<f64>()
                 .ok()
-                .is_some_and(|value| map_configs.set_scale(value)),
+                .is_some_and(|v| map_configs.set_scale(v)),
             Self::Seed => input
                 .trim()
                 .parse::<u32>()
                 .ok()
-                .is_some_and(|value| map_configs.set_seed(value)),
+                .is_some_and(|v| map_configs.set_seed(v)),
             Self::OffsetX => input
                 .trim()
                 .parse::<f64>()
                 .ok()
-                .is_some_and(|value| map_configs.set_offset_x(value)),
+                .is_some_and(|v| map_configs.set_offset_x(v)),
             Self::OffsetY => input
                 .trim()
                 .parse::<f64>()
                 .ok()
-                .is_some_and(|value| map_configs.set_offset_y(value)),
+                .is_some_and(|v| map_configs.set_offset_y(v)),
             Self::Persistence => input
                 .trim()
                 .parse::<f64>()
                 .ok()
-                .is_some_and(|value| map_configs.set_persistence(value)),
+                .is_some_and(|v| map_configs.set_persistence(v)),
             Self::Lacunarity => input
                 .trim()
                 .parse::<f64>()
                 .ok()
-                .is_some_and(|value| map_configs.set_lacunarity(value)),
+                .is_some_and(|v| map_configs.set_lacunarity(v)),
             Self::Frequency => input
                 .trim()
                 .parse::<f64>()
                 .ok()
-                .is_some_and(|value| map_configs.set_frequency(value)),
+                .is_some_and(|v| map_configs.set_frequency(v)),
             Self::HeightMultiplier => input
                 .trim()
                 .parse::<f32>()
                 .ok()
-                .is_some_and(|value| map_configs.set_height_multiplier(value)),
+                .is_some_and(|v| map_configs.set_height_multiplier(v)),
             Self::RegionsCount => input
                 .trim()
                 .parse::<usize>()
                 .ok()
-                .is_some_and(|value| map_configs.set_region_count(value)),
+                .is_some_and(|v| map_configs.set_region_count(v)),
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Editor field (scalar + dynamic collection fields)
+// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum EditorField {
@@ -357,37 +450,37 @@ impl EditorField {
     fn display_value(&self, map_configs: &Persistent<MapConfigs>) -> String {
         match self {
             Self::Scalar(field) => field.display_value(map_configs),
-            Self::CurvePointInput(index) => map_configs
+            Self::CurvePointInput(i) => map_configs
                 .height_curve
                 .points
-                .get(*index)
-                .map(|point| format_decimal(point.input as f64))
+                .get(*i)
+                .map(|p| format_decimal(p.input as f64))
                 .unwrap_or_default(),
-            Self::CurvePointOutput(index) => map_configs
+            Self::CurvePointOutput(i) => map_configs
                 .height_curve
                 .points
-                .get(*index)
-                .map(|point| format_decimal(point.output as f64))
+                .get(*i)
+                .map(|p| format_decimal(p.output as f64))
                 .unwrap_or_default(),
-            Self::LodBandDistance(index) => map_configs
+            Self::LodBandDistance(i) => map_configs
                 .endless_lod_bands
-                .get(*index)
-                .map(|band| format_decimal(band.visible_distance as f64))
+                .get(*i)
+                .map(|b| format_decimal(b.visible_distance as f64))
                 .unwrap_or_default(),
-            Self::LodBandLevel(index) => map_configs
+            Self::LodBandLevel(i) => map_configs
                 .endless_lod_bands
-                .get(*index)
-                .map(|band| band.level_of_detail.to_string())
+                .get(*i)
+                .map(|b| b.level_of_detail.to_string())
                 .unwrap_or_default(),
-            Self::RegionName(index) => map_configs
+            Self::RegionName(i) => map_configs
                 .regions
-                .get(*index)
-                .map(|region| region.name.clone())
+                .get(*i)
+                .map(|r| r.name.clone())
                 .unwrap_or_default(),
-            Self::RegionHeight(index) => map_configs
+            Self::RegionHeight(i) => map_configs
                 .regions
-                .get(*index)
-                .map(|region| format_decimal(region.height))
+                .get(*i)
+                .map(|r| format_decimal(r.height))
                 .unwrap_or_default(),
         }
     }
@@ -395,123 +488,363 @@ impl EditorField {
     fn apply_input(&self, input: &str, map_configs: &mut MapConfigs) -> bool {
         match self {
             Self::Scalar(field) => field.apply_input(input, map_configs),
-            Self::CurvePointInput(index) => input
+            Self::CurvePointInput(i) => input
                 .trim()
                 .parse::<f32>()
                 .ok()
-                .is_some_and(|value| map_configs.set_height_curve_point_input(*index, value)),
-            Self::CurvePointOutput(index) => input
+                .is_some_and(|v| map_configs.set_height_curve_point_input(*i, v)),
+            Self::CurvePointOutput(i) => input
                 .trim()
                 .parse::<f32>()
                 .ok()
-                .is_some_and(|value| map_configs.set_height_curve_point_output(*index, value)),
-            Self::LodBandDistance(index) => input
+                .is_some_and(|v| map_configs.set_height_curve_point_output(*i, v)),
+            Self::LodBandDistance(i) => input
                 .trim()
                 .parse::<f32>()
                 .ok()
-                .is_some_and(|value| map_configs.set_endless_lod_band_distance(*index, value)),
-            Self::LodBandLevel(index) => input
+                .is_some_and(|v| map_configs.set_endless_lod_band_distance(*i, v)),
+            Self::LodBandLevel(i) => input
                 .trim()
                 .parse::<u32>()
                 .ok()
-                .is_some_and(|value| map_configs.set_endless_lod_band_level_of_detail(*index, value)),
-            Self::RegionName(index) => map_configs.set_region_name(*index, input.to_string()),
-            Self::RegionHeight(index) => input
+                .is_some_and(|v| map_configs.set_endless_lod_band_level_of_detail(*i, v)),
+            Self::RegionName(i) => map_configs.set_region_name(*i, input.to_string()),
+            Self::RegionHeight(i) => input
                 .trim()
                 .parse::<f64>()
                 .ok()
-                .is_some_and(|value| map_configs.set_region_height(*index, value)),
+                .is_some_and(|v| map_configs.set_region_height(*i, v)),
         }
     }
 
     fn should_keep(&self, region_count: usize, curve_point_count: usize, lod_band_count: usize) -> bool {
         match self {
             Self::Scalar(_) => true,
-            Self::CurvePointInput(index) | Self::CurvePointOutput(index) => *index < curve_point_count,
-            Self::LodBandDistance(index) | Self::LodBandLevel(index) => *index < lod_band_count,
-            Self::RegionName(index) | Self::RegionHeight(index) => *index < region_count,
+            Self::CurvePointInput(i) | Self::CurvePointOutput(i) => *i < curve_point_count,
+            Self::LodBandDistance(i) | Self::LodBandLevel(i) => *i < lod_band_count,
+            Self::RegionName(i) | Self::RegionHeight(i) => *i < region_count,
+        }
+    }
+
+    fn is_read_only(&self) -> bool {
+        matches!(self, Self::Scalar(field) if field.is_read_only())
+    }
+
+    fn decrement(&self, map_configs: &mut MapConfigs) -> bool {
+        match self {
+            Self::Scalar(field) => field.decrement(map_configs),
+            _ => false,
+        }
+    }
+
+    fn increment(&self, map_configs: &mut MapConfigs) -> bool {
+        match self {
+            Self::Scalar(field) => field.increment(map_configs),
+            _ => false,
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Plugin impl
+// ---------------------------------------------------------------------------
 
 impl Plugin for UIEditorPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.editor.clone())
             .insert_resource(UIKeyboardCapture::default())
-            .insert_resource(UIEditorState::from_editor(&self.editor))
+            .insert_resource(UiState::new(self.editor.starts_open))
+            .insert_resource(UIEditorState::new())
             .add_systems(Update, toggle_ui_editor)
-            .add_systems(EguiPrimaryContextPass, render_ui_editor);
+            .add_systems(EguiPrimaryContextPass, show_ui_system)
+            .add_systems(PostUpdate, set_camera_viewport.after(show_ui_system));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Systems
+// ---------------------------------------------------------------------------
 
 fn toggle_ui_editor(
     keyboard: Res<ButtonInput<KeyCode>>,
     editor: Res<UIEditor>,
-    mut state: ResMut<UIEditorState>,
+    mut ui_state: ResMut<UiState>,
 ) {
     if keyboard.just_pressed(editor.toggle_key) {
-        state.is_open = !state.is_open;
+        ui_state.is_open = !ui_state.is_open;
     }
 }
 
-fn render_ui_editor(
-    mut contexts: EguiContexts,
-    editor: Res<UIEditor>,
-    mut state: ResMut<UIEditorState>,
-    mut keyboard_capture: ResMut<UIKeyboardCapture>,
-    map_configs: Option<ResMut<Persistent<MapConfigs>>>,
-    autosave: Option<ResMut<MapConfigAutosave>>,
-) {
-    keyboard_capture.is_typing = false;
-    keyboard_capture.wants_pointer_input = false;
+fn show_ui_system(world: &mut World) {
+    let Ok(egui_context) = world
+        .query_filtered::<&mut bevy_egui::EguiContext, With<PrimaryEguiContext>>()
+        .single(world)
+    else {
+        return;
+    };
+    let mut egui_context = egui_context.clone();
 
-    if !state.is_open {
+    world.resource_scope::<UiState, _>(|world, mut ui_state| {
+        if !ui_state.is_open {
+            let ctx = egui_context.get_mut();
+            ui_state.viewport_rect = ctx.input(|i| i.content_rect());
+            let mut kb = world.resource_mut::<UIKeyboardCapture>();
+            kb.wants_pointer_input = false;
+            kb.is_typing = false;
+            kb.pointer_in_viewport = true;
+            return;
+        }
+        ui_state.ui(world, &mut egui_context.get_mut());
+        let ctx = egui_context.get_mut();
+        let in_viewport = ui_state.pointer_in_viewport;
+        let mut kb = world.resource_mut::<UIKeyboardCapture>();
+        kb.pointer_in_viewport = in_viewport;
+        kb.wants_pointer_input = !in_viewport && ctx.wants_pointer_input();
+        kb.is_typing = ctx.wants_keyboard_input();
+    });
+}
+
+fn set_camera_viewport(
+    ui_state: Res<UiState>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut cam: Single<&mut Camera, Without<PrimaryEguiContext>>,
+    egui_settings: Single<&EguiContextSettings>,
+) {
+    if !ui_state.is_open {
+        cam.viewport = None;
+        return;
+    }
+    let scale_factor = window.scale_factor() * egui_settings.scale_factor;
+
+    let viewport_pos = ui_state.viewport_rect.left_top().to_vec2() * scale_factor;
+    let viewport_size = ui_state.viewport_rect.size() * scale_factor;
+
+    let physical_position = UVec2::new(viewport_pos.x as u32, viewport_pos.y as u32);
+    let physical_size = UVec2::new(viewport_size.x as u32, viewport_size.y as u32);
+
+    let rect = physical_position + physical_size;
+    let window_size = window.physical_size();
+    if rect.x <= window_size.x && rect.y <= window_size.y {
+        cam.viewport = Some(Viewport {
+            physical_position,
+            physical_size,
+            depth: 0.0..1.0,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dock UI
+// ---------------------------------------------------------------------------
+
+impl UiState {
+    fn ui(&mut self, world: &mut World, ctx: &mut egui::Context) {
+        let mut tab_viewer = TabViewer {
+            world,
+            viewport_rect: &mut self.viewport_rect,
+            selected_entities: &mut self.selected_entities,
+            selection: &mut self.selection,
+            pointer_in_viewport: &mut self.pointer_in_viewport,
+        };
+        DockArea::new(&mut self.dock_state)
+            .style(Style::from_egui(ctx.style().as_ref()))
+            .show(ctx, &mut tab_viewer);
+    }
+}
+
+struct TabViewer<'a> {
+    world: &'a mut World,
+    selected_entities: &'a mut SelectedEntities,
+    selection: &'a mut InspectorSelection,
+    viewport_rect: &'a mut egui::Rect,
+    pointer_in_viewport: &'a mut bool,
+}
+
+impl egui_dock::TabViewer for TabViewer<'_> {
+    type Tab = EguiWindow;
+
+    fn ui(&mut self, ui: &mut egui::Ui, window: &mut Self::Tab) {
+        match window {
+            EguiWindow::GameView => {
+                *self.viewport_rect = ui.clip_rect();
+            }
+            EguiWindow::Hierarchy => {
+                ui.push_id("hierarchy_tab", |ui| {
+                    let selected = hierarchy_ui(self.world, ui, self.selected_entities);
+                    if selected {
+                        *self.selection = InspectorSelection::Entities;
+                    }
+                });
+            }
+            EguiWindow::TerrainConfig => {
+                ui.push_id("terrain_config_tab", |ui| {
+                    render_terrain_config_tab(ui, self.world);
+                });
+            }
+            EguiWindow::Inspector => {
+                ui.push_id("inspector_tab", |ui| {
+                    render_inspector_tab(ui, self.world, self.selected_entities, self.selection);
+                });
+            }
+            EguiWindow::Resources => {
+                ui.push_id("resources_tab", |ui| {
+                    let type_registry = self
+                        .world
+                        .resource::<AppTypeRegistry>()
+                        .0
+                        .clone();
+                    let type_registry = type_registry.read();
+                    render_resources_tab(ui, &type_registry, self.selection);
+                });
+            }
+        }
+
+        *self.pointer_in_viewport = ui
+            .ctx()
+            .rect_contains_pointer(LayerId::background(), self.viewport_rect.shrink(16.));
+    }
+
+    fn title(&mut self, window: &mut Self::Tab) -> egui_dock::egui::WidgetText {
+        match window {
+            EguiWindow::GameView => "Game View".into(),
+            EguiWindow::Hierarchy => "Hierarchy".into(),
+            EguiWindow::TerrainConfig => "Terrain Config".into(),
+            EguiWindow::Inspector => "Inspector".into(),
+            EguiWindow::Resources => "Resources".into(),
+        }
+    }
+
+    fn clear_background(&self, window: &Self::Tab) -> bool {
+        !matches!(window, EguiWindow::GameView)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inspector tab
+// ---------------------------------------------------------------------------
+
+fn render_inspector_tab(
+    ui: &mut egui::Ui,
+    world: &mut World,
+    selected_entities: &SelectedEntities,
+    selection: &InspectorSelection,
+) {
+    match selection {
+        InspectorSelection::Entities => match selected_entities.as_slice() {
+            &[entity] => ui_for_entity_with_children(world, entity, ui),
+            entities => {
+                bevy_inspector::ui_for_entities_shared_components(world, entities, ui);
+            }
+        },
+        InspectorSelection::Resource(type_id, name) => {
+            let type_registry = world.resource::<AppTypeRegistry>().0.clone();
+            let type_registry = type_registry.read();
+            ui.label(name);
+            bevy_inspector::by_type_id::ui_for_resource(
+                world,
+                *type_id,
+                ui,
+                name,
+                &type_registry,
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resources tab
+// ---------------------------------------------------------------------------
+
+fn render_resources_tab(
+    ui: &mut egui::Ui,
+    type_registry: &TypeRegistry,
+    selection: &mut InspectorSelection,
+) {
+    let mut resources: Vec<_> = type_registry
+        .iter()
+        .filter(|reg| reg.data::<bevy::ecs::reflect::ReflectResource>().is_some())
+        .map(|reg| {
+            (
+                reg.type_info().type_path_table().short_path(),
+                reg.type_id(),
+            )
+        })
+        .collect();
+    resources.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+    for (name, type_id) in resources {
+        let selected = matches!(selection, InspectorSelection::Resource(id, _) if *id == type_id);
+        if ui.selectable_label(selected, name).clicked() {
+            *selection = InspectorSelection::Resource(type_id, name.to_string());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Terrain config tab — renders the existing terrain editor UI
+// ---------------------------------------------------------------------------
+
+fn render_terrain_config_tab(ui: &mut egui::Ui, world: &mut World) {
+    let has_configs = world.contains_resource::<Persistent<MapConfigs>>()
+        && world.contains_resource::<MapConfigAutosave>();
+
+    if !has_configs {
+        ui.label("MapConfigs not loaded.");
         return;
     }
 
-    let (Some(mut map_configs), Some(mut autosave)) = (map_configs, autosave) else {
-        return;
-    };
+    world.resource_scope::<Persistent<MapConfigs>, _>(|world, mut map_configs| {
+        world.resource_scope::<MapConfigAutosave, _>(|world, mut autosave| {
+            {
+                let mut editor_state = world.resource_mut::<UIEditorState>();
+                let has_external_change = map_configs.is_changed();
+                editor_state.sync_from_map_configs(&map_configs, has_external_change);
+            }
 
-    let Ok(ctx) = contexts.ctx_mut() else {
-        return;
-    };
-
-    let has_external_change = map_configs.is_changed();
-    state.sync_from_map_configs(&map_configs, has_external_change);
-
-    egui::SidePanel::left(editor.panel_id.clone())
-        .resizable(false)
-        .default_width(280.0)
-        .show(ctx, |ui| {
-            ui.heading(editor.panel_title.as_str());
-            ui.label("Development-only editor");
-            ui.small(format!("Toggle: {:?}", editor.toggle_key));
+            ui.heading("Terrain Configuration");
             ui.separator();
+
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("Terrain");
-                ui.label("Map Configuration");
+                ui.heading("Map Configuration");
                 ui.small("0 keeps the most detail. 6 simplifies the mesh the most.");
                 ui.add_space(6.0);
 
                 property_grid(ui, GRID_ID, |ui| {
                     for field in ScalarEditorField::ALL {
+                        let mut editor_state = world.resource_mut::<UIEditorState>();
                         render_editor_field_row(
                             ui,
                             EditorField::Scalar(field),
                             field.label(),
-                            &mut state,
+                            &mut editor_state,
                             &mut map_configs,
                             &mut autosave,
                         );
+                        drop(editor_state);
                     }
 
                     render_draw_mode_row(ui, &mut map_configs, &mut autosave);
                 });
 
-                render_endless_lod_bands_section(ui, &mut state, &mut map_configs, &mut autosave);
+                {
+                    let mut editor_state = world.resource_mut::<UIEditorState>();
+                    render_endless_lod_bands_section(
+                        ui,
+                        &mut editor_state,
+                        &mut map_configs,
+                        &mut autosave,
+                    );
+                }
 
-                render_height_curve_section(ui, &mut state, &mut map_configs, &mut autosave);
+                {
+                    let mut editor_state = world.resource_mut::<UIEditorState>();
+                    render_height_curve_section(
+                        ui,
+                        &mut editor_state,
+                        &mut map_configs,
+                        &mut autosave,
+                    );
+                }
 
                 ui.separator();
                 ui.heading("Regions");
@@ -520,23 +853,28 @@ fn render_ui_editor(
                 if map_configs.regions.is_empty() {
                     ui.small("No terrain regions configured.");
                 } else {
-                    for index in 0..map_configs.regions.len() {
+                    let region_count = map_configs.regions.len();
+                    for index in 0..region_count {
+                        let mut editor_state = world.resource_mut::<UIEditorState>();
                         render_region_section(
                             ui,
                             index,
-                            &mut state,
+                            &mut editor_state,
                             &mut map_configs,
                             &mut autosave,
                         );
+                        drop(editor_state);
                         ui.add_space(8.0);
                     }
                 }
             });
         });
-
-    keyboard_capture.is_typing = state.is_any_field_focused();
-    keyboard_capture.wants_pointer_input = ctx.wants_pointer_input();
+    });
 }
+
+// ---------------------------------------------------------------------------
+// Terrain config render helpers
+// ---------------------------------------------------------------------------
 
 fn render_editor_field_row(
     ui: &mut egui::Ui,
@@ -656,7 +994,9 @@ fn render_endless_lod_bands_section(
 ) {
     ui.separator();
     ui.heading("Endless Terrain LOD");
-    ui.small("Used only in Endless Terrain mode. Distances are maximum visible ranges for each LOD band.");
+    ui.small(
+        "Used only in Endless Terrain mode. Distances are maximum visible ranges for each LOD band.",
+    );
     ui.add_space(6.0);
 
     ui.horizontal(|ui| {
@@ -710,6 +1050,7 @@ fn render_uv_wireframe_row(
         autosave.mark_dirty();
     }
 }
+
 fn render_use_falloff_map_row(
     ui: &mut egui::Ui,
     map_configs: &mut Persistent<MapConfigs>,
@@ -831,7 +1172,9 @@ fn render_curve_point_row(
         true,
     );
 
-    let remove_clicked = ui.add_enabled(!is_endpoint, egui::Button::new("Remove")).clicked();
+    let remove_clicked = ui
+        .add_enabled(!is_endpoint, egui::Button::new("Remove"))
+        .clicked();
     ui.end_row();
 
     if remove_clicked && map_configs.get_mut().remove_height_curve_point(index) {
@@ -938,20 +1281,20 @@ fn render_region_text_row(
 ) {
     ui.label(label);
     let response = {
-        let buffer = state.input_mut(field.clone());
+        let buffer = state.input_mut(field);
         ui.add(egui::TextEdit::singleline(buffer).desired_width(150.0))
     };
     ui.end_row();
 
     if response.changed() {
-        let input = state.input_mut(field.clone()).clone();
+        let input = state.input_mut(field).clone();
         if field.apply_input(input.as_str(), map_configs.get_mut()) {
             autosave.mark_dirty();
         }
     }
 
     if response.lost_focus() {
-        state.sync_field_from_map_configs(field.clone(), map_configs);
+        state.sync_field_from_map_configs(field, map_configs);
     }
 
     state.set_focus(field, response.has_focus());
@@ -980,35 +1323,9 @@ fn render_region_color_row(
     ui.end_row();
 }
 
-impl EditorField {
-    fn is_read_only(&self) -> bool {
-        matches!(self, Self::Scalar(field) if field.is_read_only())
-    }
-
-    fn decrement(&self, map_configs: &mut MapConfigs) -> bool {
-        match self {
-            Self::Scalar(field) => field.decrement(map_configs),
-            Self::CurvePointInput(_)
-            | Self::CurvePointOutput(_)
-            | Self::LodBandDistance(_)
-            | Self::LodBandLevel(_)
-            | Self::RegionName(_)
-            | Self::RegionHeight(_) => false,
-        }
-    }
-
-    fn increment(&self, map_configs: &mut MapConfigs) -> bool {
-        match self {
-            Self::Scalar(field) => field.increment(map_configs),
-            Self::CurvePointInput(_)
-            | Self::CurvePointOutput(_)
-            | Self::LodBandDistance(_)
-            | Self::LodBandLevel(_)
-            | Self::RegionName(_)
-            | Self::RegionHeight(_) => false,
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
 
 fn format_decimal(value: f64) -> String {
     let mut formatted = format!("{value:.3}");
