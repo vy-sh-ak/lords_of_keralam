@@ -18,6 +18,7 @@ mod persistence;
 mod terrain;
 mod ui_editor;
 mod world_direction;
+mod editor_config;
 
 fn main() {
     App::new()
@@ -39,7 +40,7 @@ fn main() {
             default_color: Color::BLACK.into(),
         })
         .add_plugins(camera_plugin::CameraPlugin)
-        .add_plugins(terrain::PerlinMapPlugin)
+        .add_plugins(terrain::MapGenerator::default().plugin())
         .add_plugins(terrain::EndlessTerrainPlugin)
         .add_plugins(
             ui_editor::UIEditor::default()

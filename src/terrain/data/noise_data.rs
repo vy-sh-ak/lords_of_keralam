@@ -1,0 +1,28 @@
+use bevy::prelude::*;
+use bevy_inspector_egui::prelude::*;
+
+#[derive(Reflect, InspectorOptions, Clone)]
+#[reflect(InspectorOptions)]
+pub struct NoiseData {
+
+    #[inspector(min = 0.1, max = 10.0)]
+    pub frequency: f32,
+
+    #[inspector(min = 0.0, max = 1000.0)]
+    pub scale: f32,
+
+    #[inspector(min = 1, max = 10)]
+    pub octaves: u32,
+
+    #[inspector(min = 0.0, max = 5.0)]
+    pub lacunarity: f32,
+
+    #[inspector(min = 0.0, max = 5.0)]
+    pub persistence: f64,
+
+    
+    pub offset_x: f64,
+    pub offset_y: f64,
+
+    pub seed: u32,
+}
