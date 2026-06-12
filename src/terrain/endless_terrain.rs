@@ -8,12 +8,12 @@ use bevy_persistent::Persistent;
 
 use crate::{
     camera_plugin::{CameraSettings, CameraSystems},
-    terrain::{TerrainSampler, generate_map_data},
+    terrain::{MapGenerator, TerrainSampler, generate_map_data},
 };
 
 use super::{
-    DrawMode, EndlessTerrainLodBand, MapConfigs, MeshGenerator, chunk_span,
-    perlin_map_texture::texture_from_color_map,
+    DrawMode, EndlessTerrainLodBand, MeshGenerator, chunk_span,
+    texture_generator::white_texture,
 };
 
 pub struct EndlessTerrainPlugin;
@@ -55,7 +55,7 @@ impl Plugin for EndlessTerrainPlugin {
 
 fn update_focus_height(
     terrain_sampler: Res<TerrainSampler>,
-    map_configs: Res<Persistent<MapConfigs>>,
+    map_generator: Res<Persistent<MapGenerator>>,
     mut camera_settings: ResMut<CameraSettings>,
     time: Res<Time>,
 ) {
@@ -72,7 +72,7 @@ for distance in [5.0, 10.0, 15.0, 20.0] {
 
     let h =
         terrain_sampler.sample_height(
-            &map_configs,
+            &map_generator,
             pos.x,
             pos.y,
         );
@@ -98,7 +98,6 @@ for distance in [5.0, 10.0, 15.0, 20.0] {
 
 fn sync_endless_terrain(
     mut commands: Commands,
-    map_configs: Res<Persistent<MapConfigs>>,
     camera_settings: Res<CameraSettings>,
     camera_transform: Single<&Transform, With<Camera>>,
     mut state: ResMut<EndlessTerrainState>,
@@ -112,8 +111,9 @@ fn sync_endless_terrain(
         &mut MeshMaterial3d<StandardMaterial>,
     )>,
     terrain_sampler: Res<TerrainSampler>,
+    map_generator: Res<Persistent<MapGenerator>>,
 ) {
-    if map_configs.draw_mode != DrawMode::EndlessTerrain {
+    if map_generator.draw_mode != DrawMode::EndlessTerrain {
         for (entity, _, _, _) in &mut chunk_query {
             commands.entity(entity).despawn();
         }
@@ -121,11 +121,11 @@ fn sync_endless_terrain(
         return;
     }
 
-    if map_configs.is_changed() {
+    if map_generator.is_changed() {
         state.terrain_epoch = state.terrain_epoch.saturating_add(1);
     }
 
-    let chunk_span = chunk_span(&map_configs);
+    let chunk_span = chunk_span(&map_generator);
     let camera_position = camera_transform.translation;
     let viewer_position = camera_settings.focus_xz;
     let viewer_chunk = world_to_chunk_coord(viewer_position, chunk_span);
@@ -135,7 +135,7 @@ fn sync_endless_terrain(
         camera_settings.focus_xz.y,
     );
     let view_radius = visible_radius_from_camera(camera_position, focus, chunk_span);
-    let max_visible_distance = map_configs.max_endless_visible_distance().min(view_radius);
+    let max_visible_distance = map_generator.max_endless_visible_distance().min(view_radius);
     let chunk_radius = ((max_visible_distance / chunk_span).ceil() as i32).max(1) + 1;
     let desired_chunks = collect_desired_chunks(
         viewer_position,
@@ -143,7 +143,7 @@ fn sync_endless_terrain(
         chunk_radius,
         chunk_span,
         max_visible_distance,
-        &map_configs.endless_lod_bands,
+        &map_generator.endless_lod_bands,
     );
     let desired_coords: Vec<_> = desired_chunks.iter().map(|chunk| chunk.coord).collect();
 
@@ -177,7 +177,7 @@ fn sync_endless_terrain(
                 chunk.level_of_detail != lod || chunk.terrain_epoch != state.terrain_epoch;
             if needs_rebuild && remaining_build_budget > 0 {
                 let (mesh, texture) =
-                    build_chunk_assets(&map_configs, coord, lod, terrain_sampler.as_ref());
+                    build_chunk_assets(coord, lod, terrain_sampler.as_ref(), &map_generator);
                 *mesh_handle = Mesh3d(meshes.add(mesh));
                 *material_handle = MeshMaterial3d(materials.add(StandardMaterial {
                     base_color_texture: Some(images.add(texture)),
@@ -192,14 +192,14 @@ fn sync_endless_terrain(
             }
 
             let mut entity_commands = commands.entity(entity);
-            apply_wireframe_debug(&mut entity_commands, map_configs.show_uv_wireframe);
+            apply_wireframe_debug(&mut entity_commands, map_generator.show_uv_wireframe);
         } else {
             if remaining_build_budget == 0 {
                 continue;
             }
 
             let (mesh, texture) =
-                build_chunk_assets(&map_configs, coord, lod, terrain_sampler.as_ref());
+                build_chunk_assets(coord, lod, terrain_sampler.as_ref(), &map_generator);
             let mut entity_commands = commands.spawn((
                 EndlessTerrainChunk {
                     level_of_detail: lod,
@@ -218,7 +218,7 @@ fn sync_endless_terrain(
                     coord.y as f32 * chunk_span,
                 ),
             ));
-            apply_wireframe_debug(&mut entity_commands, map_configs.show_uv_wireframe);
+            apply_wireframe_debug(&mut entity_commands, map_generator.show_uv_wireframe);
             let entity = entity_commands.id();
             state.active_chunks.insert(coord, entity);
             remaining_build_budget -= 1;
@@ -264,20 +264,23 @@ fn collect_desired_chunks(
 }
 
 fn build_chunk_assets(
-    map_configs: &MapConfigs,
     coord: IVec2,
     level_of_detail: u32,
     terrain_sampler: &TerrainSampler,
+    map_generator: &MapGenerator,
 ) -> (Mesh, Image) {
-    let map_data = generate_map_data(map_configs, terrain_sampler, coord);
+    let map_data = generate_map_data( terrain_sampler, coord, map_generator);
     let mesh = MeshGenerator::generate_terrain_mesh(
         &map_data.noise_map,
-        map_configs.height_multiplier,
-        &map_configs.height_curve,
+        map_generator.terrain_data.height_multiplier,
+        &map_generator.terrain_data.height_curve,
         level_of_detail,
     )
     .create_mesh();
-    let texture = texture_from_color_map(&map_data.color_map);
+    let texture = white_texture(
+        map_generator.map_chunk_size,
+        map_generator.map_chunk_size,
+    );
 
     (mesh, texture)
 }

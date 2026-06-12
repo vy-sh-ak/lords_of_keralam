@@ -1,4 +1,5 @@
-use super::MapConfigs;
+use crate::terrain::MapGenerator;
+
 use bevy::prelude::*;
 use noise::{NoiseFn, Perlin};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -15,17 +16,17 @@ impl Default for TerrainSampler {
     }
 }
 impl TerrainSampler {
-    pub fn sample_noise(&self, map_configs: &MapConfigs, world_x: f64, world_z: f64) -> f32 {
-        let octaves = map_configs.octaves.max(1) as usize;
+    pub fn sample_noise(&self, map_generator: &MapGenerator, world_x: f64, world_z: f64) -> f32 {
+        let octaves = map_generator.noise_data.octaves.max(1) as usize;
 
-        let octave_offsets = self.build_octave_offsets(map_configs, octaves);
+        let octave_offsets = self.build_octave_offsets(&map_generator, octaves);
 
-        let scale = map_configs.scale.max(0.0001);
+        let scale = map_generator.noise_data.scale.max(0.0001);
 
-        let max_possible_height = self.max_possible_noise_height(map_configs, octaves);
+        let max_possible_height = self.max_possible_noise_height(&map_generator, octaves);
 
         let mut amplitude = 1.0;
-        let mut frequency = map_configs.frequency.max(0.0001);
+        let mut frequency = map_generator.noise_data.frequency.max(0.0001);
 
         let mut noise_height = 0.0;
 
@@ -38,8 +39,8 @@ impl TerrainSampler {
 
             noise_height += perlin_value * amplitude;
 
-            amplitude *= map_configs.persistence;
-            frequency *= map_configs.lacunarity;
+            amplitude *= map_generator.noise_data.persistence;
+            frequency *= map_generator.noise_data.lacunarity;
         }
 
         if max_possible_height <= f64::EPSILON {
@@ -50,32 +51,32 @@ impl TerrainSampler {
             as f32
     }
 
-    pub fn sample_height(&self, map_configs: &MapConfigs, world_x: f32, world_z: f32) -> f32 {
-        let noise = self.sample_noise(map_configs, world_x as f64, world_z as f64);
+    pub fn sample_height(&self, map_generator: &MapGenerator, world_x: f32, world_z: f32) -> f32 {
+        let noise = self.sample_noise(map_generator, world_x as f64, world_z as f64);
 
-        let curved_height = map_configs.height_curve.sample(noise);
+        let curved_height = map_generator.terrain_data.height_curve.sample(noise);
 
-        curved_height * map_configs.height_multiplier
+        curved_height * map_generator.terrain_data.height_multiplier
     }
-    fn build_octave_offsets(&self, map_configs: &MapConfigs, octaves: usize) -> Vec<(f64, f64)> {
-        let mut rng = StdRng::seed_from_u64(map_configs.seed as u64);
+    fn build_octave_offsets(&self, map_generator: &MapGenerator, octaves: usize) -> Vec<(f64, f64)> {
+        let mut rng = StdRng::seed_from_u64(map_generator.noise_data.seed as u64);
 
         (0..octaves)
             .map(|_| {
                 (
-                    rng.random_range(-100_000.0..100_000.0) + map_configs.offset_x,
-                    rng.random_range(-100_000.0..100_000.0) + map_configs.offset_y,
+                    rng.random_range(-100_000.0..100_000.0) + map_generator.noise_data.offset_x,
+                    rng.random_range(-100_000.0..100_000.0) + map_generator.noise_data.offset_y,
                 )
             })
             .collect()
     }
-    fn max_possible_noise_height(&self, map_configs: &MapConfigs, octaves: usize) -> f64 {
+    fn max_possible_noise_height(&self, map_generator: &MapGenerator, octaves: usize) -> f64 {
         let mut amplitude = 1.0;
         let mut max_possible_height = 0.0;
 
         for _ in 0..octaves {
             max_possible_height += amplitude;
-            amplitude *= map_configs.persistence;
+            amplitude *= map_generator.noise_data.persistence;
         }
 
         max_possible_height

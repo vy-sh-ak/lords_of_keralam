@@ -8,14 +8,12 @@ use bevy::{
 pub fn texture_from_color_map(color_map: &[Vec<[u8; 4]>]) -> Image {
     let height = color_map.len() as u32;
     let width = color_map.first().map_or(0, |row| row.len()) as u32;
-    let mut texture_data = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    let texture_data = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    draw_texture(texture_data, width, height)
+}
 
-    for row in color_map {
-        for color in row {
-            texture_data.extend_from_slice(color);
-        }
-    }
-
+pub fn white_texture(width: u32, height: u32) -> Image {
+    let texture_data = vec![255u8; (width as usize) * (height as usize) * 4];
     draw_texture(texture_data, width, height)
 }
 

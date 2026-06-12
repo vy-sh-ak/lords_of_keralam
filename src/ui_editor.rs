@@ -1,18 +1,23 @@
-use std::any::TypeId;
 use bevy::camera::Viewport;
 use bevy::prelude::*;
+use bevy::reflect::TypeRegistry;
 use bevy::window::{PrimaryWindow, Window};
 use bevy_egui::egui::{self, LayerId};
 use bevy_egui::{EguiPrimaryContextPass, PrimaryEguiContext};
 use bevy_inspector_egui::bevy_egui::EguiContextSettings;
 use bevy_inspector_egui::bevy_inspector::hierarchy::{SelectedEntities, hierarchy_ui};
-use bevy::reflect::TypeRegistry;
 use bevy_inspector_egui::bevy_inspector::{self, ui_for_entity_with_children};
+use bevy_inspector_egui::reflect_inspector;
+use bevy_persistent::Persistent;
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use std::any::TypeId;
 
+use crate::editor_config::EditorState;
+use crate::terrain::MapGenerator;
 
 pub mod widgets;
-
 
 // ---------------------------------------------------------------------------
 // Public plugin config
@@ -74,6 +79,7 @@ enum EguiWindow {
     Hierarchy,
     Inspector,
     Resources,
+    MapGenerator,
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +114,7 @@ impl UiState {
                 EguiWindow::Hierarchy,
                 EguiWindow::Inspector,
                 EguiWindow::Resources,
+                EguiWindow::MapGenerator,
             ]
         } else {
             vec![EguiWindow::GameView]
@@ -119,16 +126,11 @@ impl UiState {
             let tree = dock_state.main_surface_mut();
             // GameView takes most space; Inspector on the right
             let [game, _inspector] =
-                tree.split_right(NodeIndex::root(), 0.75, vec![EguiWindow::Inspector]);
+                tree.split_right(NodeIndex::root(), 0.75, vec![EguiWindow::Inspector,EguiWindow::MapGenerator]);
             // Hierarchy on the left
-            let [game, _hierarchy] =
-                tree.split_left(game, 0.2, vec![EguiWindow::Hierarchy]);
+            let [game, _hierarchy] = tree.split_left(game, 0.2, vec![EguiWindow::Hierarchy]);
             // TerrainConfig and Resources at the bottom
-            let [_game, _bottom] = tree.split_below(
-                game,
-                0.7,
-                vec![EguiWindow::Resources],
-            );
+            let [_game, _bottom] = tree.split_below(game, 0.7, vec![EguiWindow::Resources]);
         }
 
         Self {
@@ -279,13 +281,14 @@ impl egui_dock::TabViewer for TabViewer<'_> {
             }
             EguiWindow::Resources => {
                 ui.push_id("resources_tab", |ui| {
-                    let type_registry = self
-                        .world
-                        .resource::<AppTypeRegistry>()
-                        .0
-                        .clone();
+                    let type_registry = self.world.resource::<AppTypeRegistry>().0.clone();
                     let type_registry = type_registry.read();
                     render_resources_tab(ui, &type_registry, self.selection);
+                });
+            }
+            EguiWindow::MapGenerator => {
+                ui.push_id("map_generator_tab", |ui| {
+                    render_editor::<MapGenerator>(ui, self.world);
                 });
             }
         }
@@ -301,6 +304,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
             EguiWindow::Hierarchy => "Hierarchy".into(),
             EguiWindow::Inspector => "Inspector".into(),
             EguiWindow::Resources => "Resources".into(),
+            EguiWindow::MapGenerator => "Map Generator".into(),
         }
     }
 
@@ -309,9 +313,48 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Inspector tab
-// ---------------------------------------------------------------------------
+fn render_editor<T>(
+    ui: &mut egui::Ui,
+    world: &mut World,
+)
+where
+    T: Resource
+        + Clone
+        + Reflect
+        + Serialize
+        + DeserializeOwned,
+{
+    let type_registry = world.resource::<AppTypeRegistry>().0.clone();
+    let type_registry = type_registry.read();
+
+    let mut editor =
+        world.resource_mut::<EditorState<T>>();
+
+    let _ = reflect_inspector::ui_for_value(
+        &mut editor.edited,
+        ui,
+        &type_registry,
+    );
+
+    let save_clicked = ui.button("Save Changes").clicked();
+    let edited = editor.edited.clone();
+    drop(editor);
+
+    let mut persistent = world.resource_mut::<Persistent<T>>();
+
+    if save_clicked {
+        persistent.set(edited.clone()).unwrap();
+        persistent.persist().unwrap();
+        persistent.set_changed();
+    }
+
+    let current = &**persistent as &dyn Reflect;
+    if !edited.reflect_partial_eq(current).unwrap_or(true) {
+        persistent.set(edited).unwrap();
+        persistent.set_changed();
+    }
+}
+
 
 fn render_inspector_tab(
     ui: &mut egui::Ui,
@@ -330,13 +373,7 @@ fn render_inspector_tab(
             let type_registry = world.resource::<AppTypeRegistry>().0.clone();
             let type_registry = type_registry.read();
             ui.label(name);
-            bevy_inspector::by_type_id::ui_for_resource(
-                world,
-                *type_id,
-                ui,
-                name,
-                &type_registry,
-            );
+            bevy_inspector::by_type_id::ui_for_resource(world, *type_id, ui, name, &type_registry);
         }
     }
 }

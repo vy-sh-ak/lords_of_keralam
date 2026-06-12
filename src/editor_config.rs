@@ -7,7 +7,7 @@ use bevy_inspector_egui::{
 };
 use bevy_persistent::Persistent;
 use egui_dock::egui;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::persistence::PersistenceConfig;
 
@@ -81,6 +81,35 @@ impl EditorConfigAppExt for App {
             .push(EditorConfigInfo {
                 name: type_name::<T>(),
             });
+
+        self
+    }
+}
+
+#[derive(Resource)]
+pub struct EditorState<T: Resource + Clone> {
+    pub edited: T,
+}
+pub trait EditorStateAppExt {
+    fn add_editor_state<T>(&mut self) -> &mut Self
+    where
+        T: Resource + Clone + Serialize + DeserializeOwned;
+}
+
+impl EditorStateAppExt for App {
+    fn add_editor_state<T>(&mut self) -> &mut Self
+    where
+        T: Resource + Clone + Serialize + DeserializeOwned,
+    {
+        let value = self
+            .world()
+            .resource::<Persistent<T>>();
+
+        let editor_state = EditorState::<T> {
+            edited: (**value).clone(),
+        };
+
+        self.insert_resource(editor_state);
 
         self
     }
