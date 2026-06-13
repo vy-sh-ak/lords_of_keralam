@@ -14,5 +14,6 @@ pub struct TerrainData {
     pub height_multiplier: f32,
 
     #[serde(default)]
+    #[reflect(ignore)]
     pub height_curve: HeightCurve,
 }

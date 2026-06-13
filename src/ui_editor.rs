@@ -387,6 +387,96 @@ fn render_map_generator_editor(ui: &mut egui::Ui, world: &mut World) {
 
     ui.add_space(8.0);
 
+    // ---- Texture Data ----
+    egui::CollapsingHeader::new("Texture Data")
+        .default_open(false)
+        .show(ui, |ui| {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                let tex = &mut editor.edited.texture_data;
+
+                ui.horizontal(|ui| {
+                    ui.label("Min Height");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut tex.min_height, -100.0..=100.0))
+                        .changed();
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Max Height");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut tex.max_height, -100.0..=100.0))
+                        .changed();
+                });
+
+                ui.separator();
+                ui.strong("Color Bands");
+                ui.add_space(4.0);
+
+                let mut remove_idx: Option<usize> = None;
+
+                for i in 0..tex.base_colors.len() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("#{}", i + 1));
+
+                        let color = &mut tex.base_colors[i];
+                        let mut ec = egui::Rgba::from_rgba_unmultiplied(
+                            color.red,
+                            color.green,
+                            color.blue,
+                            color.alpha,
+                        );
+                        changed |= egui::color_picker::color_edit_button_rgba(
+                            ui,
+                            &mut ec,
+                            egui::color_picker::Alpha::Opaque,
+                        )
+                        .changed();
+                        *color =
+                            LinearRgba::new(ec.r(), ec.g(), ec.b(), ec.a());
+
+                        let mut h = tex.base_start_heights[i];
+                        if i > 0 {
+                            let prev = tex.base_start_heights[i - 1];
+                            h = h.clamp(prev, 1.0);
+                        }
+                        if i < tex.base_start_heights.len() - 1 {
+                            let next = tex.base_start_heights[i + 1];
+                            h = h.clamp(0.0, next);
+                        }
+                        changed |= ui
+                            .add(egui::Slider::new(&mut h, 0.0..=1.0))
+                            .changed();
+                        tex.base_start_heights[i] = h;
+
+                        if tex.base_colors.len() > 1
+                            && ui.add(egui::Button::new("✕").small()).clicked()
+                        {
+                            remove_idx = Some(i);
+                            changed = true;
+                        }
+                    });
+                }
+
+                if let Some(idx) = remove_idx {
+                    tex.base_colors.remove(idx);
+                    tex.base_start_heights.remove(idx);
+                }
+
+                ui.add_space(4.0);
+                if tex.base_colors.len() < 8 {
+                    if ui.button("＋ Add Band").clicked() {
+                        let last_h = tex.base_start_heights.last().copied().unwrap_or(0.0);
+                        let new_h = (last_h + 1.0) * 0.5;
+                        tex.base_start_heights.push(new_h);
+                        tex.base_colors
+                            .push(LinearRgba::new(0.5, 0.5, 0.5, 1.0));
+                        changed = true;
+                    }
+                }
+            });
+        });
+
+    ui.add_space(8.0);
+
     // ---- Height Curve ----
     egui::CollapsingHeader::new("Height Curve")
         .default_open(false)

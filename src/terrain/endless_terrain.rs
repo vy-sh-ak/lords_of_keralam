@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     DrawMode, EndlessTerrainLodBand, MeshGenerator, chunk_span,
-    texture_generator::white_texture,
+    texture_generator::texture_from_terrain_colors,
 };
 
 pub struct EndlessTerrainPlugin;
@@ -279,9 +279,9 @@ fn build_chunk_assets(
         level_of_detail,
     )
     .create_mesh();
-    let texture = white_texture(
-        map_generator.map_chunk_size,
-        map_generator.map_chunk_size,
+    let texture = texture_from_terrain_colors(
+        &map_data.noise_map,
+        &map_generator.texture_data,
     );
 
     (mesh, texture)

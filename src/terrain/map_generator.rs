@@ -1,11 +1,11 @@
 use super::{
     MeshGenerator,
-    texture_generator::{texture_from_height_map, white_texture},
+    texture_generator::{texture_from_height_map, texture_from_terrain_colors},
 };
 use crate::{
     editor_config::{AutosaveAppExt, EditorStateAppExt},
     persistence,
-    terrain::{FallOffGenerator, NoiseData, TerrainData, TerrainSampler, TextureData},
+    terrain::{FallOffGenerator, NoiseData, TerrainData, TerrainSampler, TextureData, terrain_material},
 };
 use bevy::{
     pbr::wireframe::{Wireframe, WireframeColor},
@@ -176,7 +176,8 @@ impl Plugin for MapGeneratorPlugin {
         let map_generator = generator_persistence
             .get_resource::<MapGenerator>("map generator", "map_generator.toml");
 
-        app.register_type::<NoiseData>()
+        app.add_plugins(MaterialPlugin::<terrain_material::TerrainMaterial>::default())
+            .register_type::<NoiseData>()
             .register_type::<TerrainData>()
             .register_type::<TextureData>()
             .register_type::<MapGenerator>()
@@ -216,7 +217,10 @@ fn create_render_assets(
                 map_generator.level_of_detail,
             )
             .create_mesh(),
-            texture: white_texture(map_generator.map_chunk_size, map_generator.map_chunk_size),
+            texture: texture_from_terrain_colors(
+                &map_data.noise_map,
+                &map_generator.texture_data,
+            ),
             vertical_offset: 0.0,
             show_wireframe: map_generator.show_uv_wireframe,
         },

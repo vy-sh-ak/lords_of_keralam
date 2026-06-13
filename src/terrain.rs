@@ -6,6 +6,7 @@ pub mod mesh_generator;
 pub mod fall_off_generator;
 pub mod data;
 pub mod terrain_sampler;
+pub mod materials;
 
 pub use endless_terrain::*;
 pub use height_curve::*;
@@ -14,4 +15,5 @@ pub use mesh_generator::*;
 pub use fall_off_generator::*;
 pub use data::*;
 pub use terrain_sampler::*;
+pub use materials::*;
 
