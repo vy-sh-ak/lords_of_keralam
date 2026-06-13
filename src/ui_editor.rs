@@ -11,18 +11,13 @@ use bevy_inspector_egui::reflect_inspector;
 use bevy_persistent::Persistent;
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::{Serialize};
 use std::any::TypeId;
 
 use crate::editor_config::EditorState;
 use crate::terrain::MapGenerator;
 
 pub mod widgets;
-
-// ---------------------------------------------------------------------------
-// Public plugin config
-// ---------------------------------------------------------------------------
-
 #[derive(Resource, Clone)]
 pub struct UIEditor {
     toggle_key: KeyCode,
@@ -58,20 +53,12 @@ pub struct UIEditorPlugin {
     editor: UIEditor,
 }
 
-// ---------------------------------------------------------------------------
-// Keyboard capture (consumed by camera_plugin)
-// ---------------------------------------------------------------------------
-
 #[derive(Resource, Default)]
 pub struct UIKeyboardCapture {
     pub is_typing: bool,
     pub wants_pointer_input: bool,
     pub pointer_in_viewport: bool,
 }
-
-// ---------------------------------------------------------------------------
-// Dock tab identifiers
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum EguiWindow {
@@ -82,20 +69,11 @@ enum EguiWindow {
     MapGenerator,
 }
 
-// ---------------------------------------------------------------------------
-// Inspector selection state
-// ---------------------------------------------------------------------------
-
 #[derive(Eq, PartialEq)]
 enum InspectorSelection {
     Entities,
     Resource(TypeId, String),
 }
-
-// ---------------------------------------------------------------------------
-// Dock / editor state
-// ---------------------------------------------------------------------------
-
 #[derive(Resource)]
 pub struct UiState {
     dock_state: DockState<EguiWindow>,
@@ -158,10 +136,6 @@ impl Plugin for UIEditorPlugin {
             .add_systems(PostUpdate, set_camera_viewport.after(show_ui_system));
     }
 }
-
-// ---------------------------------------------------------------------------
-// Systems
-// ---------------------------------------------------------------------------
 
 fn toggle_ui_editor(
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -231,9 +205,6 @@ fn set_camera_viewport(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Dock UI
-// ---------------------------------------------------------------------------
 
 impl UiState {
     fn ui(&mut self, world: &mut World, ctx: &mut egui::Context) {
@@ -336,21 +307,14 @@ where
         &type_registry,
     );
 
-    let save_clicked = ui.button("Save Changes").clicked();
     let edited = editor.edited.clone();
     drop(editor);
 
     let mut persistent = world.resource_mut::<Persistent<T>>();
 
-    if save_clicked {
-        persistent.set(edited.clone()).unwrap();
-        persistent.persist().unwrap();
-        persistent.set_changed();
-    }
-
     let current = &**persistent as &dyn Reflect;
     if !edited.reflect_partial_eq(current).unwrap_or(true) {
-        persistent.set(edited).unwrap();
+        *persistent.get_mut() = edited;
         persistent.set_changed();
     }
 }
@@ -377,10 +341,6 @@ fn render_inspector_tab(
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Resources tab
-// ---------------------------------------------------------------------------
 
 fn render_resources_tab(
     ui: &mut egui::Ui,

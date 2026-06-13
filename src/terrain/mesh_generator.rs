@@ -41,7 +41,7 @@ impl MeshGenerator {
         for y in (0..bordered_size).step_by(inc_usize) {
             for x in (0..bordered_size).step_by(inc_usize) {
                 let is_border_vertex =
-                    y == 0 || y == bordered_size - 1 || x == 0 || x == bordered_size - 1;
+                    y == 0 || y + inc_usize >= bordered_size || x == 0 || x + inc_usize >= bordered_size;
                 if is_border_vertex {
                     vertex_indices_map[x][y] = border_vertex_index as u32;
                     border_vertex_index -= 1;
@@ -67,7 +67,7 @@ impl MeshGenerator {
 
                 mesh_data.add_vertex(vertex_pos, percent, vertex_index);
 
-                if x < bordered_size - 1 && y < bordered_size - 1 {
+                if x + inc_usize < bordered_size && y + inc_usize < bordered_size {
                     let a = vertex_indices_map[x][y];
                     let b = vertex_indices_map[x + inc_usize][y];
                     let c = vertex_indices_map[x][y + inc_usize];

@@ -3,7 +3,7 @@ use super::{
     texture_generator::{texture_from_height_map, white_texture},
 };
 use crate::{
-    editor_config::EditorStateAppExt,
+    editor_config::{AutosaveAppExt, EditorStateAppExt},
     persistence,
     terrain::{
         FallOffGenerator, NoiseData, TerrainData, TerrainSampler,
@@ -69,10 +69,9 @@ impl EndlessTerrainLodBand {
     }
 }
 
-#[derive(Resource, Reflect, InspectorOptions, Clone, Serialize, Deserialize)]
+#[derive(Resource, Reflect, InspectorOptions, Clone, PartialEq, Serialize, Deserialize)]
 #[reflect(Resource, InspectorOptions)]
 pub struct MapGenerator {
-    #[serde(skip)]
     #[reflect(ignore)]
     pub map_chunk_size: u32,
     #[serde(skip)]
@@ -132,9 +131,7 @@ fn default_endless_lod_bands() -> Vec<EndlessTerrainLodBand> {
 impl MapGenerator {
     const MIN_VISIBLE_DISTANCE: f32 = 1.0;
     pub fn plugin(self) -> MapGeneratorPlugin {
-        MapGeneratorPlugin {
-            map_generator: self,
-        }
+        MapGeneratorPlugin
     }
     fn set_falloff_map(&mut self, falloff_map: Vec<Vec<f32>>) -> bool {
         if self.falloff_map == falloff_map {
@@ -151,9 +148,7 @@ impl MapGenerator {
             .unwrap_or(Self::MIN_VISIBLE_DISTANCE)
     }
 }
-pub struct MapGeneratorPlugin {
-    map_generator: MapGenerator,
-}
+pub struct MapGeneratorPlugin;
 
 struct RenderAssets {
     mesh: Mesh,
@@ -168,20 +163,14 @@ struct GroundPlane;
 impl Plugin for MapGeneratorPlugin {
     fn build(&self, app: &mut App) {
         let generator_persistence = persistence::PersistenceConfig::new("map_generator");
-        let mut map_generator =
+        let map_generator =
             generator_persistence.get_resource::<MapGenerator>("map generator", "map_generator.toml");
 
         app.register_type::<NoiseData>()
             .register_type::<MapGenerator>()
-            .insert_resource({
-                let mut mg = (*map_generator).clone();
-                if mg.map_chunk_size == 0 {
-                    mg.map_chunk_size = 241;
-                    map_generator.set(mg).unwrap();
-                }
-                map_generator
-            })
+            .insert_resource(map_generator)
             .add_editor_state::<MapGenerator>()
+            .add_autosave::<MapGenerator>()
             .insert_resource(TerrainSampler::default())
             .add_systems(Startup, setup_noise_plane)
             .add_systems(
