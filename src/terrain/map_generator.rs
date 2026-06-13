@@ -5,10 +5,7 @@ use super::{
 use crate::{
     editor_config::{AutosaveAppExt, EditorStateAppExt},
     persistence,
-    terrain::{
-        FallOffGenerator, NoiseData, TerrainData, TerrainSampler,
-        fall_off_generator,
-    },
+    terrain::{FallOffGenerator, NoiseData, TerrainData, TerrainSampler, TextureData},
 };
 use bevy::{
     pbr::wireframe::{Wireframe, WireframeColor},
@@ -89,6 +86,7 @@ pub struct MapGenerator {
 
     pub noise_data: NoiseData,
     pub terrain_data: TerrainData,
+    pub texture_data: TextureData,
 }
 
 impl Default for MapGenerator {
@@ -114,6 +112,18 @@ impl Default for MapGenerator {
                 use_falloff_map: false,
                 height_multiplier: 20.0,
                 height_curve: crate::terrain::HeightCurve::default(),
+            },
+            texture_data: TextureData {
+                base_colors: vec![
+                    Color::srgb(0.0, 0.0, 0.5).into(),
+                    Color::srgb(0.0, 0.5, 0.0).into(),
+                    Color::srgb(0.5, 0.25, 0.1).into(),
+                    Color::srgb(0.5, 0.5, 0.5).into(),
+                    Color::srgb(1.0, 1.0, 1.0).into(),
+                ],
+                base_start_heights: vec![0.2, 0.4, 0.6, 0.8, 1.0],
+                min_height: -10.0,
+                max_height: 40.0,
             },
         }
     }
@@ -163,10 +173,12 @@ struct GroundPlane;
 impl Plugin for MapGeneratorPlugin {
     fn build(&self, app: &mut App) {
         let generator_persistence = persistence::PersistenceConfig::new("map_generator");
-        let map_generator =
-            generator_persistence.get_resource::<MapGenerator>("map generator", "map_generator.toml");
+        let map_generator = generator_persistence
+            .get_resource::<MapGenerator>("map generator", "map_generator.toml");
 
         app.register_type::<NoiseData>()
+            .register_type::<TerrainData>()
+            .register_type::<TextureData>()
             .register_type::<MapGenerator>()
             .insert_resource(map_generator)
             .add_editor_state::<MapGenerator>()
@@ -181,11 +193,14 @@ impl Plugin for MapGeneratorPlugin {
 }
 
 fn create_render_assets(
-    map_generator: &MapGenerator,
+    map_generator: &mut MapGenerator,
     terrain_sampler: &TerrainSampler,
 ) -> RenderAssets {
     let map_data = generate_map_data(terrain_sampler, IVec2::ZERO, map_generator);
-    info!("Generated noise map for render assets {draw_mode:?}", draw_mode = map_generator.draw_mode);
+    info!(
+        "Generated noise map for render assets {draw_mode:?}",
+        draw_mode = map_generator.draw_mode
+    );
     match map_generator.draw_mode {
         DrawMode::NoiseMap => RenderAssets {
             mesh: create_plane_mesh(map_generator),
@@ -201,10 +216,7 @@ fn create_render_assets(
                 map_generator.level_of_detail,
             )
             .create_mesh(),
-            texture: white_texture(
-                map_generator.map_chunk_size,
-                map_generator.map_chunk_size,
-            ),
+            texture: white_texture(map_generator.map_chunk_size, map_generator.map_chunk_size),
             vertical_offset: 0.0,
             show_wireframe: map_generator.show_uv_wireframe,
         },
@@ -244,18 +256,24 @@ pub(crate) fn chunk_span(map_generator: &MapGenerator) -> f32 {
 pub(crate) fn generate_map_data(
     terrain_sampler: &TerrainSampler,
     coord: IVec2,
-    map_generator: &MapGenerator,
+    map_generator: &mut MapGenerator,
 ) -> MapData {
     let mut noise_map = generate_noise_map_for_chunk(terrain_sampler, coord, map_generator);
-    let size = map_generator.map_chunk_size as usize;
-    for y in 0..size {
-        for x in 0..size {
-            if map_generator.terrain_data.use_falloff_map {
+
+    if map_generator.terrain_data.use_falloff_map {
+        if map_generator.falloff_map.is_empty() {
+            let map_size = map_generator.map_chunk_size as usize + 2;
+            map_generator.set_falloff_map(FallOffGenerator::generate_fall_off_map(map_size));
+        }
+
+        for y in 0..noise_map.len() {
+            for x in 0..noise_map[y].len() {
                 noise_map[y][x] =
                     (noise_map[y][x] - map_generator.falloff_map[y][x]).clamp(0.0, 1.0);
             }
         }
     }
+
     MapData::new(noise_map)
 }
 
@@ -296,8 +314,7 @@ fn setup_noise_plane(
     if map_generator.draw_mode == DrawMode::EndlessTerrain {
         return;
     }
-    let render_assets =
-        create_render_assets(&map_generator, terrain_sampler.as_ref());
+    let render_assets = create_render_assets(&mut map_generator, terrain_sampler.as_ref());
     let texture_handle = images.add(render_assets.texture);
     let mesh_handle = meshes.add(render_assets.mesh);
 
@@ -312,10 +329,6 @@ fn setup_noise_plane(
         })),
         Transform::from_xyz(0.0, render_assets.vertical_offset, 0.0),
     ));
-    let map_chunk_size = map_generator.map_chunk_size;
-    map_generator.set_falloff_map(fall_off_generator::FallOffGenerator::generate_fall_off_map(
-        map_chunk_size as usize,
-    ));
     apply_wireframe_debug(&mut entity_commands, render_assets.show_wireframe);
 }
 
@@ -325,7 +338,7 @@ fn refresh_noise_plane(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     ground_plane_entities: Query<Entity, With<GroundPlane>>,
-    map_generator: Res<Persistent<MapGenerator>>,
+    mut map_generator: ResMut<Persistent<MapGenerator>>,
     mut ground_plane_query: Query<
         (
             Entity,
@@ -344,8 +357,7 @@ fn refresh_noise_plane(
         return;
     }
 
-    let render_assets =
-        create_render_assets( &map_generator, terrain_sampler.as_ref());
+    let render_assets = create_render_assets(&mut map_generator, terrain_sampler.as_ref());
 
     let Ok((entity, mut mesh_handle, mut material_handle, mut transform)) =
         ground_plane_query.single_mut()

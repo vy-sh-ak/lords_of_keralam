@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use bevy::{
-    pbr::wireframe::{Wireframe, WireframeColor},
-    prelude::*,
+    pbr::wireframe::{Wireframe, WireframeColor}, prelude::*
 };
 use bevy_persistent::Persistent;
 
@@ -59,6 +58,9 @@ fn update_focus_height(
     mut camera_settings: ResMut<CameraSettings>,
     time: Res<Time>,
 ) {
+   if camera_settings.zoom < 0.5 {
+        return;
+    }
     let forward = Vec2::new(
         -camera_settings.orbit_yaw.cos(),
         -camera_settings.orbit_yaw.sin(),
@@ -111,7 +113,7 @@ fn sync_endless_terrain(
         &mut MeshMaterial3d<StandardMaterial>,
     )>,
     terrain_sampler: Res<TerrainSampler>,
-    map_generator: Res<Persistent<MapGenerator>>,
+    mut map_generator: ResMut<Persistent<MapGenerator>>,
 ) {
     if map_generator.draw_mode != DrawMode::EndlessTerrain {
         for (entity, _, _, _) in &mut chunk_query {
@@ -177,7 +179,7 @@ fn sync_endless_terrain(
                 chunk.level_of_detail != lod || chunk.terrain_epoch != state.terrain_epoch;
             if needs_rebuild && remaining_build_budget > 0 {
                 let (mesh, texture) =
-                    build_chunk_assets(coord, lod, terrain_sampler.as_ref(), &map_generator);
+                    build_chunk_assets(coord, lod, terrain_sampler.as_ref(), &mut map_generator);
                 *mesh_handle = Mesh3d(meshes.add(mesh));
                 *material_handle = MeshMaterial3d(materials.add(StandardMaterial {
                     base_color_texture: Some(images.add(texture)),
@@ -199,7 +201,7 @@ fn sync_endless_terrain(
             }
 
             let (mesh, texture) =
-                build_chunk_assets(coord, lod, terrain_sampler.as_ref(), &map_generator);
+                build_chunk_assets(coord, lod, terrain_sampler.as_ref(), &mut map_generator);
             let mut entity_commands = commands.spawn((
                 EndlessTerrainChunk {
                     level_of_detail: lod,
@@ -267,7 +269,7 @@ fn build_chunk_assets(
     coord: IVec2,
     level_of_detail: u32,
     terrain_sampler: &TerrainSampler,
-    map_generator: &MapGenerator,
+    map_generator: &mut MapGenerator,
 ) -> (Mesh, Image) {
     let map_data = generate_map_data( terrain_sampler, coord, map_generator);
     let mesh = MeshGenerator::generate_terrain_mesh(

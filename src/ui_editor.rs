@@ -15,9 +15,12 @@ use serde::{Serialize};
 use std::any::TypeId;
 
 use crate::editor_config::EditorState;
-use crate::terrain::MapGenerator;
+use crate::terrain::{DrawMode, MapGenerator};
+use curve_editor::height_curve_editor;
 
 pub mod widgets;
+pub mod curve_editor;
+
 #[derive(Resource, Clone)]
 pub struct UIEditor {
     toggle_key: KeyCode,
@@ -259,7 +262,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
             }
             EguiWindow::MapGenerator => {
                 ui.push_id("map_generator_tab", |ui| {
-                    render_editor::<MapGenerator>(ui, self.world);
+                    render_map_generator_editor(ui, self.world);
                 });
             }
         }
@@ -284,33 +287,133 @@ impl egui_dock::TabViewer for TabViewer<'_> {
     }
 }
 
-fn render_editor<T>(
-    ui: &mut egui::Ui,
-    world: &mut World,
-)
-where
-    T: Resource
-        + Clone
-        + Reflect
-        + Serialize
-        + DeserializeOwned,
-{
+// fn render_editor<T>(
+//     ui: &mut egui::Ui,
+//     world: &mut World,
+// )
+// where
+//     T: Resource
+//         + Clone
+//         + Reflect
+//         + Serialize
+//         + DeserializeOwned,
+// {
+//     let type_registry = world.resource::<AppTypeRegistry>().0.clone();
+//     let type_registry = type_registry.read();
+
+//     let mut editor =
+//         world.resource_mut::<EditorState<T>>();
+
+//     let _ = reflect_inspector::ui_for_value(
+//         &mut editor.edited,
+//         ui,
+//         &type_registry,
+//     );
+
+//     let edited = editor.edited.clone();
+//     drop(editor);
+
+//     let mut persistent = world.resource_mut::<Persistent<T>>();
+
+//     let current = &**persistent as &dyn Reflect;
+//     if !edited.reflect_partial_eq(current).unwrap_or(true) {
+//         *persistent.get_mut() = edited;
+//         persistent.set_changed();
+//     }
+// }
+
+
+fn render_map_generator_editor(ui: &mut egui::Ui, world: &mut World) {
     let type_registry = world.resource::<AppTypeRegistry>().0.clone();
     let type_registry = type_registry.read();
 
-    let mut editor =
-        world.resource_mut::<EditorState<T>>();
+    let mut editor = world.resource_mut::<EditorState<MapGenerator>>();
+    let mut changed = false;
 
-    let _ = reflect_inspector::ui_for_value(
-        &mut editor.edited,
-        ui,
-        &type_registry,
-    );
+    // ---- Main Settings ----
+    egui::Grid::new("map_gen_main").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        ui.label("Level of Detail");
+        changed |= ui
+            .add(egui::Slider::new(&mut editor.edited.level_of_detail, 0..=6))
+            .changed();
+        ui.end_row();
 
+        ui.label("Draw Mode");
+        egui::ComboBox::from_id_salt("draw_mode")
+            .selected_text(editor.edited.draw_mode.label())
+            .show_ui(ui, |ui| {
+                for &mode in &DrawMode::ALL {
+                    changed |= ui
+                        .selectable_value(&mut editor.edited.draw_mode, mode, mode.label())
+                        .changed();
+                }
+            });
+        ui.end_row();
+
+        ui.label("Show UV Wireframe");
+        changed |= ui.checkbox(&mut editor.edited.show_uv_wireframe, "").changed();
+        ui.end_row();
+    });
+
+    ui.add_space(8.0);
+
+    // ---- Noise Data ----
+    egui::CollapsingHeader::new("Noise Data")
+        .default_open(true)
+        .show(ui, |ui| {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                changed |= reflect_inspector::ui_for_value(
+                    &mut editor.edited.noise_data,
+                    ui,
+                    &type_registry,
+                );
+            });
+        });
+
+    ui.add_space(8.0);
+
+    // ---- Terrain Data ----
+    egui::CollapsingHeader::new("Terrain Data")
+        .default_open(false)
+        .show(ui, |ui| {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                changed |= reflect_inspector::ui_for_value(
+                    &mut editor.edited.terrain_data,
+                    ui,
+                    &type_registry,
+                );
+            });
+        });
+
+    ui.add_space(8.0);
+
+    // ---- Height Curve ----
+    egui::CollapsingHeader::new("Height Curve")
+        .default_open(false)
+        .show(ui, |ui| {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                changed |= height_curve_editor(ui, &mut editor.edited.terrain_data.height_curve);
+            });
+        });
+
+    // ---- Endless LOD Bands ----
+    egui::CollapsingHeader::new("LOD Bands")
+        .default_open(false)
+        .show(ui, |ui| {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                changed |= reflect_inspector::ui_for_value(
+                    &mut editor.edited.endless_lod_bands,
+                    ui,
+                    &type_registry,
+                );
+            });
+        });
+
+    // ---- Live preview sync ----
     let edited = editor.edited.clone();
     drop(editor);
 
-    let mut persistent = world.resource_mut::<Persistent<T>>();
+    let mut persistent = world.resource_mut::<Persistent<MapGenerator>>();
 
     let current = &**persistent as &dyn Reflect;
     if !edited.reflect_partial_eq(current).unwrap_or(true) {
@@ -318,7 +421,6 @@ where
         persistent.set_changed();
     }
 }
-
 
 fn render_inspector_tab(
     ui: &mut egui::Ui,
