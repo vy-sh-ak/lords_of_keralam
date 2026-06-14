@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::HeightCurve;
 
-#[derive(Reflect, InspectorOptions, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Reflect, InspectorOptions, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 #[reflect(InspectorOptions)]
 pub struct TerrainData {
 
@@ -14,6 +15,6 @@ pub struct TerrainData {
     pub height_multiplier: f32,
 
     #[serde(default)]
-    #[reflect(ignore)]
+    // #[reflect(ignore)]
     pub height_curve: HeightCurve,
 }

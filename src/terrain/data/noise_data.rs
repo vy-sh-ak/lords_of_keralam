@@ -2,7 +2,8 @@ use bevy::prelude::*;
 use bevy_inspector_egui::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Reflect, InspectorOptions, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Reflect, InspectorOptions, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 #[reflect(InspectorOptions)]
 pub struct NoiseData {
 

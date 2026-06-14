@@ -10,12 +10,10 @@ use bevy_inspector_egui::bevy_inspector::{self, ui_for_entity_with_children};
 use bevy_inspector_egui::reflect_inspector;
 use bevy_persistent::Persistent;
 use egui_dock::{DockArea, DockState, NodeIndex, Style};
-use serde::de::DeserializeOwned;
-use serde::{Serialize};
 use std::any::TypeId;
 
 use crate::editor_config::EditorState;
-use crate::terrain::{DrawMode, MapGenerator};
+use crate::terrain::{DrawMode, FallOffGenerator, MapGenerator};
 use curve_editor::height_curve_editor;
 
 pub mod widgets;
@@ -408,67 +406,117 @@ fn render_map_generator_editor(ui: &mut egui::Ui, world: &mut World) {
                 });
 
                 ui.separator();
-                ui.strong("Color Bands");
+                ui.strong("Texture Layers");
                 ui.add_space(4.0);
 
                 let mut remove_idx: Option<usize> = None;
 
-                for i in 0..tex.base_colors.len() {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("#{}", i + 1));
+                for i in 0..tex.layers.len() {
+                    let _ = egui::Frame::group(ui.style())
+                        .inner_margin(egui::Margin::symmetric(8, 4))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.strong(format!("#{}", i + 1));
+                                if tex.layers.len() > 1
+                                    && ui.add(egui::Button::new("✕").small()).clicked()
+                                {
+                                    remove_idx = Some(i);
+                                }
+                            });
 
-                        let color = &mut tex.base_colors[i];
-                        let mut ec = egui::Rgba::from_rgba_unmultiplied(
-                            color.red,
-                            color.green,
-                            color.blue,
-                            color.alpha,
-                        );
-                        changed |= egui::color_picker::color_edit_button_rgba(
-                            ui,
-                            &mut ec,
-                            egui::color_picker::Alpha::Opaque,
-                        )
-                        .changed();
-                        *color =
-                            LinearRgba::new(ec.r(), ec.g(), ec.b(), ec.a());
+                            let layer = &mut tex.layers[i];
 
-                        let mut h = tex.base_start_heights[i];
-                        if i > 0 {
-                            let prev = tex.base_start_heights[i - 1];
-                            h = h.clamp(prev, 1.0);
-                        }
-                        if i < tex.base_start_heights.len() - 1 {
-                            let next = tex.base_start_heights[i + 1];
-                            h = h.clamp(0.0, next);
-                        }
-                        changed |= ui
-                            .add(egui::Slider::new(&mut h, 0.0..=1.0))
-                            .changed();
-                        tex.base_start_heights[i] = h;
+                            ui.horizontal(|ui| {
+                                ui.label("Texture");
+                                let textures = list_texture_files();
+                                if !textures.is_empty() {
+                                    egui::ComboBox::from_id_salt(format!("tex_combo_{}", i))
+                                        .selected_text(&layer.texture_path)
+                                        .show_ui(ui, |ui| {
+                                            for tex in &textures {
+                                                changed |= ui
+                                                    .selectable_value(
+                                                        &mut layer.texture_path,
+                                                        tex.clone(),
+                                                        tex,
+                                                    )
+                                                    .changed();
+                                            }
+                                        });
+                                }
+                                changed |= ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut layer.texture_path)
+                                            .desired_width(140.0),
+                                    )
+                                    .changed();
+                            });
 
-                        if tex.base_colors.len() > 1
-                            && ui.add(egui::Button::new("✕").small()).clicked()
-                        {
-                            remove_idx = Some(i);
-                            changed = true;
-                        }
-                    });
+                            ui.horizontal(|ui| {
+                                ui.label("Start Height");
+                                changed |= ui
+                                    .add(egui::Slider::new(&mut layer.start_height, 0.0..=1.0))
+                                    .changed();
+                            });
+
+                            ui.horizontal(|ui| {
+                                ui.label("Blend");
+                                changed |= ui
+                                    .add(egui::Slider::new(&mut layer.blend_strength, 0.0..=1.0))
+                                    .changed();
+                            });
+
+                            ui.horizontal(|ui| {
+                                ui.label("Tint");
+                                let mut ec = egui::Rgba::from_rgba_unmultiplied(
+                                    layer.tint.red,
+                                    layer.tint.green,
+                                    layer.tint.blue,
+                                    layer.tint.alpha,
+                                );
+                                changed |= egui::color_picker::color_edit_button_rgba(
+                                    ui,
+                                    &mut ec,
+                                    egui::color_picker::Alpha::Opaque,
+                                )
+                                .changed();
+                                layer.tint =
+                                    LinearRgba::new(ec.r(), ec.g(), ec.b(), ec.a());
+                            });
+
+                            ui.horizontal(|ui| {
+                                ui.label("Tint Strength");
+                                changed |= ui
+                                    .add(egui::Slider::new(&mut layer.tint_strength, 0.0..=1.0))
+                                    .changed();
+                            });
+
+                            ui.horizontal(|ui| {
+                                ui.label("Tex Scale");
+                                changed |= ui
+                                    .add(egui::Slider::new(&mut layer.texture_scale, 1.0..=50.0))
+                                    .changed();
+                            });
+                        });
                 }
 
                 if let Some(idx) = remove_idx {
-                    tex.base_colors.remove(idx);
-                    tex.base_start_heights.remove(idx);
+                    tex.layers.remove(idx);
+                    changed = true;
                 }
 
                 ui.add_space(4.0);
-                if tex.base_colors.len() < 8 {
-                    if ui.button("＋ Add Band").clicked() {
-                        let last_h = tex.base_start_heights.last().copied().unwrap_or(0.0);
-                        let new_h = (last_h + 1.0) * 0.5;
-                        tex.base_start_heights.push(new_h);
-                        tex.base_colors
-                            .push(LinearRgba::new(0.5, 0.5, 0.5, 1.0));
+                if tex.layers.len() < 8 {
+                    if ui.button("＋ Add Layer").clicked() {
+                        let last = tex.layers.last().map(|l| l.start_height).unwrap_or(0.0);
+                        tex.layers.push(crate::terrain::data::TextureLayerConfig {
+                            texture_path: "textures/grass.png".to_string(),
+                            start_height: (last + 1.0) * 0.5,
+                            blend_strength: 0.1,
+                            tint_strength: 0.0,
+                            texture_scale: 10.0,
+                            tint: LinearRgba::new(0.5, 0.5, 0.5, 1.0),
+                        });
                         changed = true;
                     }
                 }
@@ -500,16 +548,20 @@ fn render_map_generator_editor(ui: &mut egui::Ui, world: &mut World) {
         });
 
     // ---- Live preview sync ----
+    if !changed {
+        return;
+    }
+
     let edited = editor.edited.clone();
     drop(editor);
 
     let mut persistent = world.resource_mut::<Persistent<MapGenerator>>();
-
-    let current = &**persistent as &dyn Reflect;
-    if !edited.reflect_partial_eq(current).unwrap_or(true) {
-        *persistent.get_mut() = edited;
-        persistent.set_changed();
+    *persistent.get_mut() = edited;
+    if persistent.terrain_data.use_falloff_map && persistent.falloff_map.is_empty() {
+        let map_size = persistent.map_chunk_size as usize + 2;
+        persistent.falloff_map = FallOffGenerator::generate_fall_off_map(map_size);
     }
+    persistent.set_changed();
 }
 
 fn render_inspector_tab(
@@ -532,6 +584,23 @@ fn render_inspector_tab(
             bevy_inspector::by_type_id::ui_for_resource(world, *type_id, ui, name, &type_registry);
         }
     }
+}
+
+fn list_texture_files() -> Vec<String> {
+    let assets_dir = std::path::Path::new("assets/textures");
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(assets_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "png") {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    files.push(format!("textures/{}", name));
+                }
+            }
+        }
+    }
+    files.sort();
+    files
 }
 
 fn render_resources_tab(

@@ -1,70 +1,150 @@
-Since you're building a **city builder**, I'd skip the pure-color approach entirely and go straight to a **texture splat shader**.
-
-Sebastian Lague's shader is great for learning, but once you start placing roads, farms, forests, and cities, solid colors quickly look dated.
-
-A better progression is:
-
-```text
-Noise Map
-    ↓
-Terrain Mesh
-    ↓
-Height-based texture blending
-    ↓
-Biome-based texture blending
-    ↓
-Road decals / terrain painting
-```
+You're right. I stopped midway through the shader implementation. Let me give you the full Bevy implementation plan I'd use if I were building your city-builder terrain system today.
 
 ---
 
 # Goal
 
-Render:
+Move from:
 
 ```text
-0.00 - 0.20  -> Sand texture
-0.20 - 0.60  -> Grass texture
-0.60 - 0.80  -> Rock texture
-0.80 - 1.00  -> Snow texture
+HeightMap
+    ↓
+ColorMap
+    ↓
+Texture Image
 ```
 
-with smooth blending.
-
-Result:
+to:
 
 ```text
-sand ===== grass ===== rock ===== snow
-         smooth      smooth
+HeightMap
+    ↓
+Terrain Mesh
+    ↓
+Custom Terrain Material
+    ↓
+Grass / Sand / Rock / Water textures
+    ↓
+Height-based blending
+    ↓
+Slope-based rock placement
+    ↓
+Tint support
 ```
 
-instead of
+This is essentially Sebastian Lague's terrain shader adapted to modern Bevy.
 
-```text
-sand | grass | rock | snow
+---
+
+# Phase 1 — Keep HeightMap Generation As-Is
+
+You already have:
+
+```rust
+TerrainSampler
+NoiseMap
+MeshGenerator
+Chunk System
+LOD System
+```
+
+Don't touch any of that.
+
+Keep generating:
+
+```rust
+Vec<Vec<f32>>
+```
+
+or
+
+```rust
+Vec<f32>
+```
+
+height values.
+
+The shader will use the final vertex positions.
+
+---
+
+# Phase 2 — Create Terrain Layer Config
+
+Instead of Unity's:
+
+```csharp
+Layer[]
+```
+
+create:
+
+```rust
+#[derive(Clone)]
+pub struct TerrainLayer {
+    pub start_height: f32,
+
+    pub blend_strength: f32,
+
+    pub tint: LinearRgba,
+
+    pub tint_strength: f32,
+
+    pub texture_scale: f32,
+
+    pub texture: Handle<Image>,
+}
 ```
 
 ---
 
-# Step 1: Create a custom material
+Resource:
+
+```rust
+#[derive(Resource)]
+pub struct TerrainTextureConfig {
+    pub min_height: f32,
+    pub max_height: f32,
+
+    pub layers: Vec<TerrainLayer>,
+}
+```
+
+Example:
+
+```rust
+TerrainTextureConfig {
+    min_height: 0.0,
+    max_height: 100.0,
+
+    layers: vec![
+        water,
+        sand,
+        grass,
+        rock,
+    ]
+}
+```
+
+---
+
+# Phase 3 — Create Custom Material
 
 Create:
 
-```rust
-// terrain_material.rs
+```text
+materials/
+ ├── terrain_material.rs
+ └── terrain.wgsl
 ```
 
-```rust
-use bevy::{
-    asset::Asset,
-    pbr::Material,
-    prelude::*,
-    reflect::TypePath,
-    render::render_resource::*,
-};
+---
 
+Material:
+
+```rust
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct TerrainMaterial {
+
     #[uniform(0)]
     pub min_height: f32,
 
@@ -72,162 +152,128 @@ pub struct TerrainMaterial {
     pub max_height: f32,
 
     #[uniform(0)]
-    pub blend_strength: f32,
+    pub layer_count: u32,
 
-    #[texture(1)]
-    #[sampler(2)]
-    pub sand_texture: Handle<Image>,
+    #[uniform(0)]
+    pub start_heights: [f32; 8],
 
-    #[texture(3)]
-    #[sampler(4)]
-    pub grass_texture: Handle<Image>,
+    #[uniform(0)]
+    pub blend_strengths: [f32; 8],
 
-    #[texture(5)]
-    #[sampler(6)]
-    pub rock_texture: Handle<Image>,
+    #[uniform(0)]
+    pub tint_strengths: [f32; 8],
 
-    #[texture(7)]
-    #[sampler(8)]
-    pub snow_texture: Handle<Image>,
+    #[uniform(0)]
+    pub texture_scales: [f32; 8],
+
+    #[uniform(0)]
+    pub tints: [Vec4; 8],
 }
 ```
 
 ---
 
-# Step 2: Register material plugin
+# Phase 4 — Start Simple
+
+Do NOT build texture arrays yet.
+
+Bind textures individually.
 
 ```rust
-app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
+#[texture(1)]
+#[sampler(2)]
+pub grass_texture: Handle<Image>;
+
+#[texture(3)]
+#[sampler(4)]
+pub rock_texture: Handle<Image>;
+
+#[texture(5)]
+#[sampler(6)]
+pub sand_texture: Handle<Image>;
+
+#[texture(7)]
+#[sampler(8)]
+pub water_texture: Handle<Image>;
 ```
+
+Much easier to debug.
 
 ---
 
-# Step 3: Material implementation
+# Phase 5 — Use a Material Extension
+
+If using Bevy 0.17:
+
+```rust
+MaterialPlugin::<TerrainMaterial>::default()
+```
+
+Implement:
 
 ```rust
 impl Material for TerrainMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/terrain_material.wgsl".into()
+        "shaders/terrain.wgsl".into()
     }
 }
 ```
 
 ---
 
-# Step 4: Add terrain textures
+# Phase 6 — Pass World Position
 
-Example:
-
-```text
-assets/
- ├─ textures/
- │   ├─ sand.png
- │   ├─ grass.png
- │   ├─ rock.png
- │   └─ snow.png
-```
-
----
-
-# Step 5: Load textures
-
-```rust
-let sand = asset_server.load("textures/sand.png");
-let grass = asset_server.load("textures/grass.png");
-let rock = asset_server.load("textures/rock.png");
-let snow = asset_server.load("textures/snow.png");
-```
-
----
-
-# Step 6: Create material
-
-```rust
-let terrain_material = materials.add(TerrainMaterial {
-    min_height: -20.0,
-    max_height: 120.0,
-
-    blend_strength: 0.05,
-
-    sand_texture: sand,
-    grass_texture: grass,
-    rock_texture: rock,
-    snow_texture: snow,
-});
-```
-
----
-
-# Step 7: Apply material
-
-```rust
-commands.spawn((
-    Mesh3d(mesh_handle),
-    MeshMaterial3d(terrain_material),
-));
-```
-
----
-
-# Step 8: Terrain shader
-
-Create:
+The shader needs:
 
 ```text
-assets/shaders/terrain.wgsl
+world position
+world normal
+```
+
+for:
+
+```text
+height lookup
+triplanar mapping
+slope detection
 ```
 
 ---
 
-## Material struct
+Vertex output:
 
 ```wgsl
-struct TerrainMaterial {
-    min_height: f32,
-    max_height: f32,
-    blend_strength: f32,
+struct VertexOutput {
+    @builtin(position)
+    clip_position: vec4<f32>,
+
+    @location(0)
+    world_pos: vec3<f32>,
+
+    @location(1)
+    world_normal: vec3<f32>,
 }
 ```
 
 ---
 
-## Bindings
+# Phase 7 — Implement InverseLerp
 
-```wgsl
-@group(2) @binding(0)
-var<uniform> material: TerrainMaterial;
+Unity:
 
-@group(2) @binding(1)
-var sand_tex: texture_2d<f32>;
-
-@group(2) @binding(2)
-var sand_sampler: sampler;
-
-@group(2) @binding(3)
-var grass_tex: texture_2d<f32>;
-
-@group(2) @binding(4)
-var grass_sampler: sampler;
-
-@group(2) @binding(5)
-var rock_tex: texture_2d<f32>;
-
-@group(2) @binding(6)
-var rock_sampler: sampler;
-
-@group(2) @binding(7)
-var snow_tex: texture_2d<f32>;
-
-@group(2) @binding(8)
-var snow_sampler: sampler;
+```csharp
+inverseLerp()
 ```
 
----
-
-## Utility functions
+WGSL:
 
 ```wgsl
-fn inverse_lerp(a: f32, b: f32, value: f32) -> f32 {
+fn inverse_lerp(
+    a: f32,
+    b: f32,
+    value: f32
+) -> f32 {
+
     return clamp(
         (value - a) / (b - a),
         0.0,
@@ -238,112 +284,285 @@ fn inverse_lerp(a: f32, b: f32, value: f32) -> f32 {
 
 ---
 
-## Fragment shader
+# Phase 8 — Implement Triplanar Mapping
+
+This is critical.
+
+Without it:
+
+```text
+cliffs stretch
+```
+
+With it:
+
+```text
+cliffs look natural
+```
+
+Function:
 
 ```wgsl
-@fragment
-fn fragment(
-    mesh: bevy_pbr::MeshFragmentInput
-) -> @location(0) vec4<f32> {
+fn triplanar(
+    texture: texture_2d<f32>,
+    sampler_tex: sampler,
+    world_pos: vec3<f32>,
+    scale: f32,
+    blend_axes: vec3<f32>,
+) -> vec3<f32> {
 
-    let world_pos = mesh.world_position;
+    let p = world_pos / scale;
 
-    let uv = world_pos.xz * 0.05;
+    let x =
+        textureSample(texture, sampler_tex, p.yz).rgb
+        * blend_axes.x;
 
-    let sand =
-        textureSample(sand_tex, sand_sampler, uv);
+    let y =
+        textureSample(texture, sampler_tex, p.xz).rgb
+        * blend_axes.y;
 
-    let grass =
-        textureSample(grass_tex, grass_sampler, uv);
+    let z =
+        textureSample(texture, sampler_tex, p.xy).rgb
+        * blend_axes.z;
 
-    let rock =
-        textureSample(rock_tex, rock_sampler, uv);
-
-    let snow =
-        textureSample(snow_tex, snow_sampler, uv);
-
-    let h = inverse_lerp(
-        material.min_height,
-        material.max_height,
-        world_pos.y
-    );
-
-    let sand_grass =
-        smoothstep(0.15, 0.25, h);
-
-    let grass_rock =
-        smoothstep(0.55, 0.65, h);
-
-    let rock_snow =
-        smoothstep(0.75, 0.85, h);
-
-    var color =
-        mix(sand, grass, sand_grass);
-
-    color =
-        mix(color, rock, grass_rock);
-
-    color =
-        mix(color, snow, rock_snow);
-
-    return color;
+    return x + y + z;
 }
 ```
 
 ---
 
-# Step 9: Improve texture tiling
+# Phase 9 — Calculate Height %
 
-Large worlds look terrible when textures stretch.
+Equivalent to:
 
-Use world-space UVs:
-
-```wgsl
-let uv = world_pos.xz * 0.1;
+```csharp
+heightPercent
 ```
 
-instead of mesh UVs.
+WGSL:
 
-This is called **triplanar/world projection**.
+```wgsl
+let height_percent =
+    inverse_lerp(
+        min_height,
+        max_height,
+        world_pos.y
+    );
+```
 
 ---
 
-# Step 10: Future upgrade (recommended)
+# Phase 10 — Calculate Slope
 
-After you get this working:
+This is where I would improve Sebastian's implementation.
 
-Add:
-
-```rust
-forest_texture
-mud_texture
-road_texture
-farm_texture
-stone_texture
+```wgsl
+let slope =
+    1.0 - world_normal.y;
 ```
 
-Then drive texture selection by:
+Results:
 
 ```text
-height
-+
-slope
-+
-biome
+0.0 = flat ground
+
+1.0 = vertical cliff
 ```
 
-For example:
+---
+
+# Phase 11 — Water Layer
+
+```wgsl
+if height_percent < 0.20 {
+    color = water_texture;
+}
+```
+
+---
+
+# Phase 12 — Sand Layer
+
+```wgsl
+if height_percent > 0.20 &&
+   height_percent < 0.30
+{
+    color = sand_texture;
+}
+```
+
+---
+
+# Phase 13 — Grass Layer
+
+```wgsl
+if height_percent > 0.30 {
+    color = grass_texture;
+}
+```
+
+---
+
+# Phase 14 — Override With Rock On Steep Slopes
+
+This makes a huge difference visually.
+
+```wgsl
+if slope > 0.5 {
+    color = rock_texture;
+}
+```
+
+---
+
+# Phase 15 — Smooth Blending
+
+Replace hard transitions.
+
+Instead of:
+
+```wgsl
+if grass
+```
+
+Use:
+
+```wgsl
+smoothstep()
+```
+
+Example:
+
+```wgsl
+let grass_weight =
+    smoothstep(
+        0.25,
+        0.40,
+        height_percent
+    );
+```
+
+Now textures blend naturally.
+
+---
+
+# Phase 16 — Add Tinting
+
+Unity:
+
+```csharp
+baseColour
+```
+
+WGSL:
+
+```wgsl
+final_color =
+    texture_color * (1.0 - tint_strength)
+    +
+    tint.rgb * tint_strength;
+```
+
+Useful for:
 
 ```text
-Height < 0.2 → sand
-
-Slope > 45° → rock
-
-Biome == forest → forest texture
-
-Biome == farmland → dirt texture
+summer
+autumn
+spring
+dry season
+wet season
 ```
 
-This is much closer to how games like Manor Lords and Cities: Skylines build terrain materials.
+without changing textures.
 
-For your Bevy city-builder, I'd stop at **height + slope blending** first. It's only about 50 extra lines in WGSL and gives a massive visual improvement over height-only texturing.
+---
+
+# Phase 17 — Add Texture Scale
+
+Unity:
+
+```csharp
+textureScale
+```
+
+WGSL:
+
+```wgsl
+let p =
+    world_pos / texture_scale;
+```
+
+Allows:
+
+```text
+grass = dense
+
+rock = large
+
+sand = medium
+```
+
+---
+
+# Phase 18 — Convert To Texture Array (Optional)
+
+After everything works:
+
+Replace:
+
+```text
+water texture
+sand texture
+grass texture
+rock texture
+```
+
+with:
+
+```text
+texture_2d_array
+```
+
+Exactly like Sebastian's implementation.
+
+Benefits:
+
+* cleaner shader
+* arbitrary number of layers
+* closer to Unity version
+
+---
+
+# What I'd actually build for your Manor Lords-style project
+
+Version 1:
+
+```text
+Height based:
+  Water
+  Sand
+  Grass
+
+Slope based:
+  Rock
+
+Triplanar:
+  Enabled
+
+Tint:
+  Enabled
+
+Texture Array:
+  Disabled
+```
+
+Version 2:
+
+```text
+Texture Array
+Biome System
+Season Tinting
+Distance Blending
+```
+
+Get Version 1 working first. The biggest visual upgrade comes from **triplanar mapping + slope-based rock placement**, not from texture arrays.

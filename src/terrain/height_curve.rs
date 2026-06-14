@@ -7,6 +7,7 @@ const DEFAULT_MIDPOINT_INPUT: f32 = 0.5;
 const DEFAULT_MIDPOINT_OUTPUT: f32 = 0.5;
 
 #[derive(Reflect, InspectorOptions, Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 #[reflect(InspectorOptions)]
 pub struct HeightCurve {
     pub points: Vec<HeightCurvePoint>,

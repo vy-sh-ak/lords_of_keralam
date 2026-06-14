@@ -1,11 +1,11 @@
-use super::{
-    MeshGenerator,
-    texture_generator::{texture_from_height_map, texture_from_terrain_colors},
-};
+use super::{MeshGenerator, texture_generator::texture_from_height_map};
 use crate::{
     editor_config::{AutosaveAppExt, EditorStateAppExt},
     persistence,
-    terrain::{FallOffGenerator, NoiseData, TerrainData, TerrainSampler, TextureData, terrain_material},
+    terrain::{
+        FallOffGenerator, NoiseData, TerrainData, TerrainSampler, TextureData,
+        terrain_material::{TerrainMaterial, build_terrain_material},
+    },
 };
 use bevy::{
     pbr::wireframe::{Wireframe, WireframeColor},
@@ -67,6 +67,7 @@ impl EndlessTerrainLodBand {
 }
 
 #[derive(Resource, Reflect, InspectorOptions, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 #[reflect(Resource, InspectorOptions)]
 pub struct MapGenerator {
     #[reflect(ignore)]
@@ -114,16 +115,42 @@ impl Default for MapGenerator {
                 height_curve: crate::terrain::HeightCurve::default(),
             },
             texture_data: TextureData {
-                base_colors: vec![
-                    Color::srgb(0.0, 0.0, 0.5).into(),
-                    Color::srgb(0.0, 0.5, 0.0).into(),
-                    Color::srgb(0.5, 0.25, 0.1).into(),
-                    Color::srgb(0.5, 0.5, 0.5).into(),
-                    Color::srgb(1.0, 1.0, 1.0).into(),
-                ],
-                base_start_heights: vec![0.2, 0.4, 0.6, 0.8, 1.0],
                 min_height: -10.0,
                 max_height: 40.0,
+                layers: vec![
+                    crate::terrain::data::TextureLayerConfig {
+                        texture_path: "textures/water.png".to_string(),
+                        start_height: 0.2,
+                        blend_strength: 0.1,
+                        tint_strength: 0.0,
+                        texture_scale: 5.0,
+                        tint: LinearRgba::new(0.0, 0.0, 0.8, 1.0),
+                    },
+                    crate::terrain::data::TextureLayerConfig {
+                        texture_path: "textures/sand.png".to_string(),
+                        start_height: 0.3,
+                        blend_strength: 0.1,
+                        tint_strength: 0.0,
+                        texture_scale: 8.0,
+                        tint: LinearRgba::new(0.9, 0.85, 0.5, 1.0),
+                    },
+                    crate::terrain::data::TextureLayerConfig {
+                        texture_path: "textures/grass.png".to_string(),
+                        start_height: 0.35,
+                        blend_strength: 0.15,
+                        tint_strength: 0.0,
+                        texture_scale: 12.0,
+                        tint: LinearRgba::new(0.2, 0.7, 0.1, 1.0),
+                    },
+                    crate::terrain::data::TextureLayerConfig {
+                        texture_path: "textures/rock.png".to_string(),
+                        start_height: 0.8,
+                        blend_strength: 0.1,
+                        tint_strength: 0.0,
+                        texture_scale: 20.0,
+                        tint: LinearRgba::new(0.5, 0.5, 0.5, 1.0),
+                    },
+                ],
             },
         }
     }
@@ -162,7 +189,7 @@ pub struct MapGeneratorPlugin;
 
 struct RenderAssets {
     mesh: Mesh,
-    texture: Image,
+    texture: Option<Image>,
     vertical_offset: f32,
     show_wireframe: bool,
 }
@@ -176,7 +203,7 @@ impl Plugin for MapGeneratorPlugin {
         let map_generator = generator_persistence
             .get_resource::<MapGenerator>("map generator", "map_generator.toml");
 
-        app.add_plugins(MaterialPlugin::<terrain_material::TerrainMaterial>::default())
+        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .register_type::<NoiseData>()
             .register_type::<TerrainData>()
             .register_type::<TextureData>()
@@ -193,8 +220,51 @@ impl Plugin for MapGeneratorPlugin {
     }
 }
 
+fn spawn_ground_plane(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    standard_materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+    asset_server: &AssetServer,
+    terrain_materials: &mut Assets<TerrainMaterial>,
+    render_assets: &RenderAssets,
+    map_generator: &MapGenerator,
+) {
+    let mesh_handle = meshes.add(render_assets.mesh.clone());
+    let mut entity_commands = commands.spawn((
+        GroundPlane,
+        Name::new("GroundPlane"),
+        Mesh3d(mesh_handle),
+        Transform::from_xyz(0.0, render_assets.vertical_offset, 0.0),
+    ));
+
+    match map_generator.draw_mode {
+        DrawMode::Mesh => {
+            let mat_handle = build_terrain_material(terrain_materials, asset_server, map_generator);
+            info!(
+                "Spawned GroundPlane with TerrainMaterial handle={:?}",
+                mat_handle
+            );
+            entity_commands.insert(MeshMaterial3d(mat_handle));
+        }
+        DrawMode::NoiseMap | DrawMode::FallOffMap => {
+            if let Some(texture) = &render_assets.texture {
+                let texture_handle = images.add(texture.clone());
+                entity_commands.insert(MeshMaterial3d(standard_materials.add(StandardMaterial {
+                    base_color_texture: Some(texture_handle),
+                    perceptual_roughness: 1.0,
+                    ..default()
+                })));
+            }
+        }
+        _ => {}
+    }
+
+    apply_wireframe_debug(&mut entity_commands, render_assets.show_wireframe);
+}
+
 fn create_render_assets(
-    map_generator: &mut MapGenerator,
+    map_generator: &MapGenerator,
     terrain_sampler: &TerrainSampler,
 ) -> RenderAssets {
     let map_data = generate_map_data(terrain_sampler, IVec2::ZERO, map_generator);
@@ -205,9 +275,9 @@ fn create_render_assets(
     match map_generator.draw_mode {
         DrawMode::NoiseMap => RenderAssets {
             mesh: create_plane_mesh(map_generator),
-            texture: texture_from_height_map(&map_data.noise_map),
+            texture: Some(texture_from_height_map(&map_data.noise_map)),
             vertical_offset: -0.01,
-            show_wireframe: false,
+            show_wireframe: map_generator.show_uv_wireframe,
         },
         DrawMode::Mesh => RenderAssets {
             mesh: MeshGenerator::generate_terrain_mesh(
@@ -217,27 +287,24 @@ fn create_render_assets(
                 map_generator.level_of_detail,
             )
             .create_mesh(),
-            texture: texture_from_terrain_colors(
-                &map_data.noise_map,
-                &map_generator.texture_data,
-            ),
+            texture: None,
             vertical_offset: 0.0,
             show_wireframe: map_generator.show_uv_wireframe,
         },
         DrawMode::EndlessTerrain => RenderAssets {
             mesh: create_plane_mesh(map_generator),
-            texture: texture_from_height_map(&map_data.noise_map),
+            texture: Some(texture_from_height_map(&map_data.noise_map)),
             vertical_offset: -0.01,
-            show_wireframe: false,
+            show_wireframe: map_generator.show_uv_wireframe,
         },
         DrawMode::FallOffMap => {
             let fall_off_map =
                 FallOffGenerator::generate_fall_off_map(map_generator.map_chunk_size as usize);
             RenderAssets {
                 mesh: create_plane_mesh(map_generator),
-                texture: texture_from_height_map(&fall_off_map),
+                texture: Some(texture_from_height_map(&fall_off_map)),
                 vertical_offset: -0.01,
-                show_wireframe: false,
+                show_wireframe: map_generator.show_uv_wireframe,
             }
         }
     }
@@ -257,19 +324,21 @@ pub(crate) fn chunk_span(map_generator: &MapGenerator) -> f32 {
     map_generator.map_chunk_size.saturating_sub(1).max(1) as f32
 }
 
+pub(crate) fn ensure_falloff_map(map_generator: &mut MapGenerator) {
+    if map_generator.terrain_data.use_falloff_map && map_generator.falloff_map.is_empty() {
+        let map_size = map_generator.map_chunk_size as usize + 2;
+        map_generator.set_falloff_map(FallOffGenerator::generate_fall_off_map(map_size));
+    }
+}
+
 pub(crate) fn generate_map_data(
     terrain_sampler: &TerrainSampler,
     coord: IVec2,
-    map_generator: &mut MapGenerator,
+    map_generator: &MapGenerator,
 ) -> MapData {
     let mut noise_map = generate_noise_map_for_chunk(terrain_sampler, coord, map_generator);
 
     if map_generator.terrain_data.use_falloff_map {
-        if map_generator.falloff_map.is_empty() {
-            let map_size = map_generator.map_chunk_size as usize + 2;
-            map_generator.set_falloff_map(FallOffGenerator::generate_fall_off_map(map_size));
-        }
-
         for y in 0..noise_map.len() {
             for x in 0..noise_map[y].len() {
                 noise_map[y][x] =
@@ -310,48 +379,40 @@ pub(crate) fn generate_noise_map_for_chunk(
 fn setup_noise_plane(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut standard_materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    asset_server: Res<AssetServer>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
     terrain_sampler: Res<TerrainSampler>,
     mut map_generator: ResMut<Persistent<MapGenerator>>,
 ) {
+    ensure_falloff_map(&mut map_generator);
     if map_generator.draw_mode == DrawMode::EndlessTerrain {
         return;
     }
-    let render_assets = create_render_assets(&mut map_generator, terrain_sampler.as_ref());
-    let texture_handle = images.add(render_assets.texture);
-    let mesh_handle = meshes.add(render_assets.mesh);
-
-    let mut entity_commands = commands.spawn((
-        GroundPlane,
-        Name::new("GroundPlane"),
-        Mesh3d(mesh_handle),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color_texture: Some(texture_handle),
-            perceptual_roughness: 1.0,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, render_assets.vertical_offset, 0.0),
-    ));
-    apply_wireframe_debug(&mut entity_commands, render_assets.show_wireframe);
+    let render_assets = create_render_assets(&map_generator, terrain_sampler.as_ref());
+    spawn_ground_plane(
+        &mut commands,
+        &mut meshes,
+        &mut standard_materials,
+        &mut images,
+        &asset_server,
+        &mut terrain_materials,
+        &render_assets,
+        &map_generator,
+    );
 }
 
 fn refresh_noise_plane(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut standard_materials: ResMut<Assets<StandardMaterial>>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    asset_server: Res<AssetServer>,
     ground_plane_entities: Query<Entity, With<GroundPlane>>,
-    mut map_generator: ResMut<Persistent<MapGenerator>>,
-    mut ground_plane_query: Query<
-        (
-            Entity,
-            &mut Mesh3d,
-            &mut MeshMaterial3d<StandardMaterial>,
-            &mut Transform,
-        ),
-        With<GroundPlane>,
-    >,
+    map_generator: Res<Persistent<MapGenerator>>,
+    mut ground_plane_query: Query<(Entity, &mut Mesh3d, &mut Transform), With<GroundPlane>>,
     terrain_sampler: Res<TerrainSampler>,
 ) {
     if map_generator.draw_mode == DrawMode::EndlessTerrain {
@@ -361,41 +422,56 @@ fn refresh_noise_plane(
         return;
     }
 
-    let render_assets = create_render_assets(&mut map_generator, terrain_sampler.as_ref());
+    let render_assets = create_render_assets(&map_generator, terrain_sampler.as_ref());
 
-    let Ok((entity, mut mesh_handle, mut material_handle, mut transform)) =
-        ground_plane_query.single_mut()
-    else {
-        let texture_handle = images.add(render_assets.texture);
-        let mesh_handle = meshes.add(render_assets.mesh);
-        let mut entity_commands = commands.spawn((
-            GroundPlane,
-            Name::new("GroundPlane"),
-            Mesh3d(mesh_handle),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color_texture: Some(texture_handle),
-                perceptual_roughness: 1.0,
-                ..default()
-            })),
-            Transform::from_xyz(0.0, render_assets.vertical_offset, 0.0),
-        ));
-
-        apply_wireframe_debug(&mut entity_commands, render_assets.show_wireframe);
-        return;
+    let entity = match ground_plane_query.single_mut() {
+        Ok((entity, mut mesh_handle, mut transform)) => {
+            *mesh_handle = Mesh3d(meshes.add(render_assets.mesh.clone()));
+            transform.translation = Vec3::new(0.0, render_assets.vertical_offset, 0.0);
+            entity
+        }
+        Err(_) => {
+            spawn_ground_plane(
+                &mut commands,
+                &mut meshes,
+                &mut standard_materials,
+                &mut images,
+                &asset_server,
+                &mut terrain_materials,
+                &render_assets,
+                &map_generator,
+            );
+            return;
+        }
     };
 
-    *mesh_handle = Mesh3d(meshes.add(render_assets.mesh));
+    match map_generator.draw_mode {
+        DrawMode::Mesh => {
+            commands
+                .entity(entity)
+                .remove::<MeshMaterial3d<StandardMaterial>>();
+            let mat_handle =
+                build_terrain_material(&mut terrain_materials, &asset_server, &map_generator);
+            commands.entity(entity).insert(MeshMaterial3d(mat_handle));
+        }
+        _ => {
+            commands
+                .entity(entity)
+                .remove::<MeshMaterial3d<TerrainMaterial>>();
+            if let Some(texture) = &render_assets.texture {
+                let texture_handle = images.add(texture.clone());
+                commands
+                    .entity(entity)
+                    .insert(MeshMaterial3d(standard_materials.add(StandardMaterial {
+                        base_color_texture: Some(texture_handle),
+                        perceptual_roughness: 1.0,
+                        ..default()
+                    })));
+            }
+        }
+    }
 
-    *material_handle = MeshMaterial3d(materials.add(StandardMaterial {
-        base_color_texture: Some(images.add(render_assets.texture)),
-        perceptual_roughness: 1.0,
-        ..default()
-    }));
-
-    transform.translation = Vec3::new(0.0, render_assets.vertical_offset, 0.0);
-
-    let mut entity_commands = commands.entity(entity);
-    apply_wireframe_debug(&mut entity_commands, render_assets.show_wireframe);
+    apply_wireframe_debug(&mut commands.entity(entity), render_assets.show_wireframe);
 }
 
 fn apply_wireframe_debug(entity_commands: &mut EntityCommands, show_wireframe: bool) {
