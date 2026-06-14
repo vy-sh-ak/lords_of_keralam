@@ -28,7 +28,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let height_end = material.params.z;
     let tint_strength = material.params.w;
 
-    let p = in.world_position.xz * scale;
+    let p = in.world_position.xz * scale + 0.5;
     let height = in.world_position.y;
 
     var color = textureSample(water_texture, water_sampler, p).rgb;

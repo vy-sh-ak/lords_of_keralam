@@ -494,7 +494,7 @@ fn render_map_generator_editor(ui: &mut egui::Ui, world: &mut World) {
                             ui.horizontal(|ui| {
                                 ui.label("Tex Scale");
                                 changed |= ui
-                                    .add(egui::Slider::new(&mut layer.texture_scale, 1.0..=50.0))
+                                    .add(egui::Slider::new(&mut layer.texture_scale, 0.1..=500.0))
                                     .changed();
                             });
                         });
@@ -509,8 +509,10 @@ fn render_map_generator_editor(ui: &mut egui::Ui, world: &mut World) {
                 if tex.layers.len() < 8 {
                     if ui.button("＋ Add Layer").clicked() {
                         let last = tex.layers.last().map(|l| l.start_height).unwrap_or(0.0);
+                        let textures = list_texture_files();
+                        let default_tex = textures.first().cloned().unwrap_or_else(|| "textures/grass.png".to_string());
                         tex.layers.push(crate::terrain::data::TextureLayerConfig {
-                            texture_path: "textures/grass.png".to_string(),
+                            texture_path: default_tex,
                             start_height: (last + 1.0) * 0.5,
                             blend_strength: 0.1,
                             tint_strength: 0.0,

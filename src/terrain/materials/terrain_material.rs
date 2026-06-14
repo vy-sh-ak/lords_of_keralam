@@ -43,10 +43,12 @@ pub fn build_terrain_material(
     let tint_strength = water_layer.map_or(0.0, |l| l.tint_strength);
     let tint = water_layer.map_or(LinearRgba::WHITE, |l| l.tint);
 
+    let texture_path = water_layer.map_or("textures/water.png".to_string(), |l| l.texture_path.clone());
+
     let handle = materials.add(TerrainMaterial {
         params: Vec4::new(texture_scale, height_start, height_end, tint_strength),
         tint_color: Vec4::new(tint.red, tint.green, tint.blue, tint.alpha),
-        water_texture: asset_server.load("textures/water.png"),
+        water_texture: asset_server.load(texture_path),
     });
 
     info!("Built TerrainMaterial handle={:?}", handle);
