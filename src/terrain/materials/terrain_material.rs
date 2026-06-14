@@ -4,19 +4,43 @@ use bevy::{
     shader::ShaderRef,
 };
 
-use crate::terrain::MapGenerator;
+use crate::terrain::{MapGenerator, data::TextureLayerConfig};
 
 const SHADER_ASSET_PATH: &str = "shaders/terrain_material.wgsl";
+const MAX_TEXTURES: usize = 4;
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct TerrainMaterial {
     #[uniform(0)]
     pub params: Vec4,
     #[uniform(0)]
-    pub tint_color: Vec4,
+    pub layer0: Vec4,
+    #[uniform(0)]
+    pub layer1: Vec4,
+    #[uniform(0)]
+    pub layer2: Vec4,
+    #[uniform(0)]
+    pub layer3: Vec4,
+    #[uniform(0)]
+    pub tint0: Vec4,
+    #[uniform(0)]
+    pub tint1: Vec4,
+    #[uniform(0)]
+    pub tint2: Vec4,
+    #[uniform(0)]
+    pub tint3: Vec4,
     #[texture(1)]
     #[sampler(2)]
-    pub water_texture: Handle<Image>,
+    pub texture0: Handle<Image>,
+    #[texture(3)]
+    #[sampler(4)]
+    pub texture1: Handle<Image>,
+    #[texture(5)]
+    #[sampler(6)]
+    pub texture2: Handle<Image>,
+    #[texture(7)]
+    #[sampler(8)]
+    pub texture3: Handle<Image>,
 }
 
 impl Material for TerrainMaterial {
@@ -25,32 +49,59 @@ impl Material for TerrainMaterial {
     }
 }
 
+fn pack_layer(layer: &TextureLayerConfig, height_multiplier: f32) -> Vec4 {
+    Vec4::new(
+        layer.start_height * height_multiplier,
+        layer.blend_strength * height_multiplier,
+        layer.tint_strength,
+        0.0,
+    )
+}
+
+fn pack_tint(layer: &TextureLayerConfig) -> Vec4 {
+    Vec4::new(layer.tint.red, layer.tint.green, layer.tint.blue, layer.tint.alpha)
+}
+
 pub fn build_terrain_material(
     materials: &mut Assets<TerrainMaterial>,
     asset_server: &AssetServer,
     map_generator: &MapGenerator,
 ) -> Handle<TerrainMaterial> {
-    let water_layer = map_generator.texture_data.layers.first();
+    let texture_data = &map_generator.texture_data;
     let height_multiplier = map_generator.terrain_data.height_multiplier;
 
-    let texture_scale = water_layer.map_or(0.2, |l| 1.0 / l.texture_scale);
+    let mut sorted: Vec<&TextureLayerConfig> = texture_data.layers.iter().collect();
+    sorted.sort_by(|a, b| a.start_height.partial_cmp(&b.start_height).unwrap());
+    let count = sorted.len().min(MAX_TEXTURES);
 
-    let start_height = water_layer.map_or(0.0, |l| l.start_height);
-    let blend_strength = water_layer.map_or(0.1, |l| l.blend_strength);
-    let height_start = start_height * height_multiplier;
-    let height_end = height_start + blend_strength * height_multiplier;
+    let texture_scale = sorted.first().map_or(0.2, |l| 1.0 / l.texture_scale);
 
-    let tint_strength = water_layer.map_or(0.0, |l| l.tint_strength);
-    let tint = water_layer.map_or(LinearRgba::WHITE, |l| l.tint);
+    let mut layers = [Vec4::ZERO; MAX_TEXTURES];
+    let mut tints = [Vec4::ZERO; MAX_TEXTURES];
+    let mut textures: [Handle<Image>; MAX_TEXTURES] = core::array::from_fn(|_| Handle::default());
 
-    let texture_path = water_layer.map_or("textures/water.png".to_string(), |l| l.texture_path.clone());
+    for (i, layer) in sorted.iter().take(MAX_TEXTURES).enumerate() {
+        layers[i] = pack_layer(layer, height_multiplier);
+        tints[i] = pack_tint(layer);
+        textures[i] = asset_server.load(&layer.texture_path);
+    }
 
     let handle = materials.add(TerrainMaterial {
-        params: Vec4::new(texture_scale, height_start, height_end, tint_strength),
-        tint_color: Vec4::new(tint.red, tint.green, tint.blue, tint.alpha),
-        water_texture: asset_server.load(texture_path),
+        params: Vec4::new(texture_scale, texture_data.min_height, texture_data.max_height, count as f32),
+        layer0: layers[0],
+        layer1: layers[1],
+        layer2: layers[2],
+        layer3: layers[3],
+        tint0: tints[0],
+        tint1: tints[1],
+        tint2: tints[2],
+        tint3: tints[3],
+        texture0: textures[0].clone(),
+        texture1: textures[1].clone(),
+        texture2: textures[2].clone(),
+        texture3: textures[3].clone(),
     });
 
-    info!("Built TerrainMaterial handle={:?}", handle);
+    info!("Built TerrainMaterial handle={:?} with {} layers", handle, count);
     handle
 }
