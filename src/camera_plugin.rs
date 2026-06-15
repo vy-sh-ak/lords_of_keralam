@@ -45,7 +45,7 @@ impl Plugin for CameraPlugin {
             zoom_speed: 0.05,
             zoom_smoothness: 12.0,
             min_distance: 6.0,
-            max_distance: 500.0,
+            max_distance: 1000.0,
             min_elevation: 0.0,
             max_elevation: PI / 2.0 - 0.05,
             focus_xz: Vec2::new(3.0, 3.0),

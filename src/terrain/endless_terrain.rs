@@ -318,6 +318,7 @@ fn select_level_of_detail(distance: f32, lod_bands: &[EndlessTerrainLodBand]) ->
         .or_else(|| lod_bands.last())
         .map(|band| band.level_of_detail)
         .unwrap_or(0)
+        .min(2)
 }
 
 fn visible_radius_from_camera(camera_position: Vec3, focus: Vec3, chunk_span: f32) -> f32 {

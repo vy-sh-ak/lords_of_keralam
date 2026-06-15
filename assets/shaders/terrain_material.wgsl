@@ -33,12 +33,18 @@ fn layer_weight(start: f32, blend: f32, height: f32) -> f32 {
     return 1.0 - smoothstep(0.0, blend, abs(height - start));
 }
 
+fn sample_layer(tex: texture_2d<f32>, samp: sampler, layer: vec4<f32>, tint: vec4<f32>, world_pos: vec4<f32>, height: f32) -> vec3<f32> {
+    let scale = layer.w;
+    let p = fract(world_pos.xz * scale + 0.5);
+    let w = layer_weight(layer.x, layer.y, height);
+    let tint_str = layer.z;
+    let tex_color = textureSample(tex, samp, p).rgb;
+    return mix(tex_color, tint.rgb, tint_str) * w;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let scale = material.params.x;
     let count = u32(material.params.w);
-
-    let p = fract(in.world_position.xz * scale + 0.5);
     let height = in.world_position.y;
 
     var color = vec3(0.0);
@@ -46,42 +52,30 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Layer 0
     if count > 0u {
-        let w = layer_weight(material.layer0.x, material.layer0.y, height);
-        let tint_str = material.layer0.z;
-        let tex = textureSample(texture0, sampler0, p).rgb;
-        let tinted = mix(tex, material.tint0.rgb, tint_str);
-        color += tinted * w;
-        total_weight += w;
+        let c = sample_layer(texture0, sampler0, material.layer0, material.tint0, in.world_position, height);
+        color += c;
+        total_weight += layer_weight(material.layer0.x, material.layer0.y, height);
     }
 
     // Layer 1
     if count > 1u {
-        let w = layer_weight(material.layer1.x, material.layer1.y, height);
-        let tint_str = material.layer1.z;
-        let tex = textureSample(texture1, sampler1, p).rgb;
-        let tinted = mix(tex, material.tint1.rgb, tint_str);
-        color += tinted * w;
-        total_weight += w;
+        let c = sample_layer(texture1, sampler1, material.layer1, material.tint1, in.world_position, height);
+        color += c;
+        total_weight += layer_weight(material.layer1.x, material.layer1.y, height);
     }
 
     // Layer 2
     if count > 2u {
-        let w = layer_weight(material.layer2.x, material.layer2.y, height);
-        let tint_str = material.layer2.z;
-        let tex = textureSample(texture2, sampler2, p).rgb;
-        let tinted = mix(tex, material.tint2.rgb, tint_str);
-        color += tinted * w;
-        total_weight += w;
+        let c = sample_layer(texture2, sampler2, material.layer2, material.tint2, in.world_position, height);
+        color += c;
+        total_weight += layer_weight(material.layer2.x, material.layer2.y, height);
     }
 
     // Layer 3
     if count > 3u {
-        let w = layer_weight(material.layer3.x, material.layer3.y, height);
-        let tint_str = material.layer3.z;
-        let tex = textureSample(texture3, sampler3, p).rgb;
-        let tinted = mix(tex, material.tint3.rgb, tint_str);
-        color += tinted * w;
-        total_weight += w;
+        let c = sample_layer(texture3, sampler3, material.layer3, material.tint3, in.world_position, height);
+        color += c;
+        total_weight += layer_weight(material.layer3.x, material.layer3.y, height);
     }
 
     if total_weight > 0.0 {

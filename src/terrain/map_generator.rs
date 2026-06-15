@@ -51,7 +51,7 @@ impl Default for DrawMode {
 #[derive(Reflect, InspectorOptions, Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[reflect(InspectorOptions)]
 pub struct EndlessTerrainLodBand {
-    #[inspector(min = 0, max = 6)]
+    #[inspector(min = 0, max = 8)]
     pub level_of_detail: u32,
     #[inspector(min = 0.0, max = 10000.0)]
     pub visible_distance: f32,
@@ -76,7 +76,7 @@ pub struct MapGenerator {
     #[reflect(ignore)]
     pub falloff_map: Vec<Vec<f32>>,
 
-    #[inspector(min = 0, max = 6)]
+    #[inspector(min = 0, max = 3)]
     pub level_of_detail: u32,
 
     pub draw_mode: DrawMode,
@@ -158,10 +158,10 @@ impl Default for MapGenerator {
 
 fn default_endless_lod_bands() -> Vec<EndlessTerrainLodBand> {
     vec![
-        EndlessTerrainLodBand::new(0, 220.0),
-        EndlessTerrainLodBand::new(2, 420.0),
-        EndlessTerrainLodBand::new(4, 700.0),
-        EndlessTerrainLodBand::new(6, 1050.0),
+        EndlessTerrainLodBand::new(0, 300.0),
+        EndlessTerrainLodBand::new(1, 800.0),
+        EndlessTerrainLodBand::new(2, 1800.0),
+        EndlessTerrainLodBand::new(3, 3200.0),
     ]
 }
 

@@ -16,24 +16,23 @@ impl MeshGenerator {
         let bordered_size = height_map.first().map_or(0, |row| row.len());
         let map_chunk_size = bordered_size - 2;
 
-        let inc = if level_of_detail == 0 {
-            1
-        } else {
-            level_of_detail * 2
+        let inc = match level_of_detail {
+            0 => 1,
+            1 => 2,
+            2 => 4,
+            3 => 8,
+            _ => 16,
         };
         let inc_usize = inc as usize;
 
-        let mut x_indices: Vec<usize> = Vec::new();
-        x_indices.push(0);
+        let mut x_indices: Vec<usize> = vec![0];
         for i in (1..=map_chunk_size).step_by(inc_usize) {
             x_indices.push(i);
         }
-        if *x_indices.last().unwrap() < map_chunk_size {
+        if *x_indices.last().unwrap() != map_chunk_size {
             x_indices.push(map_chunk_size);
         }
         x_indices.push(bordered_size - 1);
-        x_indices.sort();
-        x_indices.dedup();
 
         let y_indices = x_indices.clone();
 
@@ -76,11 +75,7 @@ impl MeshGenerator {
                     (y_f - 1.0) / (mesh_size_unsimplified_f - 1.0),
                 );
                 let height: f32 = height_curve.sample(height_map[y][x]) * height_multiplier;
-                let vertex_pos: Vec3 = Vec3::new(
-                    x_f - half_width,
-                    height,
-                    half_height - y_f,
-                );
+                let vertex_pos: Vec3 = Vec3::new(x_f - half_width, height, half_height - y_f);
 
                 mesh_data.add_vertex(vertex_pos, percent, vertex_index);
             }
@@ -98,16 +93,11 @@ impl MeshGenerator {
                     continue;
                 }
                 let mesh_index = vertex_indices_map[x][y] as usize;
-                let h_left =
-                    height_curve.sample(height_map[y][x - 1]) * height_multiplier;
-                let h_right =
-                    height_curve.sample(height_map[y][x + 1]) * height_multiplier;
-                let h_up =
-                    height_curve.sample(height_map[y - 1][x]) * height_multiplier;
-                let h_down =
-                    height_curve.sample(height_map[y + 1][x]) * height_multiplier;
-                normals[mesh_index] =
-                    Vec3::new(h_left - h_right, 2.0, h_down - h_up).normalize();
+                let h_left = height_curve.sample(height_map[y][x - 1]) * height_multiplier;
+                let h_right = height_curve.sample(height_map[y][x + 1]) * height_multiplier;
+                let h_up = height_curve.sample(height_map[y - 1][x]) * height_multiplier;
+                let h_down = height_curve.sample(height_map[y + 1][x]) * height_multiplier;
+                normals[mesh_index] = Vec3::new(h_left - h_right, 2.0, h_down - h_up).normalize();
             }
         }
         mesh_data.normals = normals;

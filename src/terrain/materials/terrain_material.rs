@@ -54,7 +54,7 @@ fn pack_layer(layer: &TextureLayerConfig, height_multiplier: f32) -> Vec4 {
         layer.start_height * height_multiplier,
         layer.blend_strength * height_multiplier,
         layer.tint_strength,
-        0.0,
+        1.0 / layer.texture_scale.max(0.001),
     )
 }
 
@@ -74,8 +74,6 @@ pub fn build_terrain_material(
     sorted.sort_by(|a, b| a.start_height.partial_cmp(&b.start_height).unwrap());
     let count = sorted.len().min(MAX_TEXTURES);
 
-    let texture_scale = sorted.first().map_or(0.2, |l| 1.0 / l.texture_scale);
-
     let mut layers = [Vec4::ZERO; MAX_TEXTURES];
     let mut tints = [Vec4::ZERO; MAX_TEXTURES];
     let mut textures: [Handle<Image>; MAX_TEXTURES] = core::array::from_fn(|_| Handle::default());
@@ -87,7 +85,7 @@ pub fn build_terrain_material(
     }
 
     let handle = materials.add(TerrainMaterial {
-        params: Vec4::new(texture_scale, texture_data.min_height, texture_data.max_height, count as f32),
+        params: Vec4::new(0.0, texture_data.min_height, texture_data.max_height, count as f32),
         layer0: layers[0],
         layer1: layers[1],
         layer2: layers[2],
