@@ -272,6 +272,7 @@ fn create_render_assets(
         "Generated noise map for render assets {draw_mode:?}",
         draw_mode = map_generator.draw_mode
     );
+    info!("Noise map: {:?}", map_data.noise_map.iter().map(|row| row.iter().take(5).cloned().collect::<Vec<f32>>()).take(5).collect::<Vec<Vec<f32>>>());
     match map_generator.draw_mode {
         DrawMode::NoiseMap => RenderAssets {
             mesh: create_plane_mesh(map_generator),

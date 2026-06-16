@@ -42,6 +42,7 @@ fn main() {
         .add_plugins(camera_plugin::CameraPlugin)
         .add_plugins(terrain::MapGenerator::default().plugin())
         .add_plugins(terrain::EndlessTerrainPlugin)
+        .add_plugins(terrain::GridGeneratorPlugin)
         .add_plugins(
             ui_editor::UIEditor::default()
                 .with_toggle_key(KeyCode::F1)
@@ -59,6 +60,8 @@ fn main() {
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.spawn((
         Name::new("Camera"),
@@ -69,6 +72,12 @@ fn setup(
         },
         Projection::from(PerspectiveProjection::default()),
         Transform::from_xyz(0.0, 2.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    commands.spawn((
+        Name::new("Cube"),
+        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+        MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
+        Transform::from_xyz(0.0, 2.0, 0.0),
     ));
 
     // Sun

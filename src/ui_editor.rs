@@ -108,8 +108,9 @@ impl UiState {
                 tree.split_right(NodeIndex::root(), 0.75, vec![EguiWindow::Inspector,EguiWindow::MapGenerator]);
             // Hierarchy on the left
             let [game, _hierarchy] = tree.split_left(game, 0.2, vec![EguiWindow::Hierarchy]);
-            // TerrainConfig and Resources at the bottom
-            let [_game, _bottom] = tree.split_below(game, 0.7, vec![EguiWindow::Resources]);
+            // TerrainConfig and Resources at the bottom (collapsed by default)
+            let [_game, bottom] = tree.split_below(game, 0.7, vec![EguiWindow::Resources]);
+            tree[bottom].set_collapsed(true);
         }
 
         Self {
