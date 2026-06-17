@@ -81,7 +81,7 @@ pub struct GridGeneratorPlugin;
 impl Plugin for GridGeneratorPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(WorldGrid::default())
-            .add_systems(Update, update_grid);
+            .add_systems(Update, (update_grid, tile_clicked));
     }
 }
 
@@ -149,4 +149,29 @@ fn update_grid(
             .collect();
         gizmos.linestrip(points, color);
     }
+}
+
+fn tile_clicked(
+    world_grid: Res<WorldGrid>,
+    camera_query: Single<(&Camera, &GlobalTransform)>,
+    window: Single<&Window>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+) {
+     if !mouse_buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+
+    let (camera, camera_transform) = camera_query.into_inner();
+
+    if let Some(cursor_pos) = window.cursor_position()
+    && let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos)
+    && let Some(pos) = ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Dir3::Y))
+        .map(|distance| ray.get_point(distance))
+    {
+        let tile_pos = TilePos::world_to_grid(pos);
+        if world_grid.tiles.contains_key(&tile_pos) {
+            info!("Tile clicked at position: {:?}", tile_pos);
+        }
+    }
+    
 }
