@@ -41,12 +41,16 @@ pub struct Tile {
 #[derive(Resource)]
 pub struct WorldGrid {
     pub tiles: HashMap<TilePos, Tile>,
+    pub show_grid: bool,
+    pub grid_fixed: bool,
 }
 
 impl Default for WorldGrid {
     fn default() -> Self {
         Self {
             tiles: HashMap::new(),
+            show_grid: true,
+            grid_fixed: false,
         }
     }
 }
@@ -88,29 +92,70 @@ impl Plugin for GridGeneratorPlugin {
 fn update_grid(
     mut gizmos: Gizmos,
     mut world_grid: ResMut<WorldGrid>,
-    camera_transform: Single<&Transform, With<Camera>>,
+    camera_query: Single<(&Camera, &GlobalTransform)>,
     camera_settings: Res<CameraSettings>,
     terrain_sampler: Res<TerrainSampler>,
     map_generator: Res<Persistent<MapGenerator>>,
 ) {
-    let focus = Vec3::new(
-        camera_settings.focus_xz.x,
-        0.0,
-        camera_settings.focus_xz.y,
-    );
-    let distance = camera_transform.translation.distance(focus);
-    let visible_radius = (distance * 0.6).clamp(30.0, 250.0);
+    if !world_grid.show_grid {
+        return;
+    }
 
-    let min_tx = ((camera_settings.focus_xz.x - visible_radius) / TILE_SIZE)
+    let (camera, camera_transform) = camera_query.into_inner();
+
+    let focus = if world_grid.grid_fixed {
+        let map_center = GRID_SIZE as f32 * TILE_SIZE / 2.0;
+        Vec3::new(map_center, 0.0, map_center)
+    } else {
+        Vec3::new(
+            camera_settings.focus_xz.x,
+            0.0,
+            camera_settings.focus_xz.y,
+        )
+    };
+
+    // Compute visible radius from camera frustum projected onto ground plane (y=0).
+    // This correctly handles zoom and orbit: the grid tiles at the edges of the
+    // viewport are always included, regardless of camera angle or distance.
+    let frustum_radius = camera
+        .logical_viewport_size()
+        .map(|size| {
+            let corners = [
+                Vec2::new(0.0, 0.0),
+                Vec2::new(size.x, 0.0),
+                Vec2::new(0.0, size.y),
+                Vec2::new(size.x, size.y),
+            ];
+            corners
+                .iter()
+                .filter_map(|&uv| {
+                    let ray = camera.viewport_to_world(camera_transform, uv).ok()?;
+                    let t = ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Dir3::Y))?;
+                    let point = ray.get_point(t);
+                    let dx = point.x - focus.x;
+                    let dz = point.z - focus.z;
+                    Some((dx * dx + dz * dz).sqrt())
+                })
+                .fold(0.0_f32, f32::max)
+        })
+        .unwrap_or(0.0);
+
+    // Always show at least 30 tiles in each direction so the grid never
+    // disappears on zoom-in. Clamp to reasonable max to avoid over-draw.
+    let visible_radius = frustum_radius
+        .max(30.0 * TILE_SIZE)
+        .min(250.0);
+
+    let min_tx = ((focus.x - visible_radius) / TILE_SIZE)
         .floor()
         .max(0.0) as i32;
-    let max_tx = ((camera_settings.focus_xz.x + visible_radius) / TILE_SIZE)
+    let max_tx = ((focus.x + visible_radius) / TILE_SIZE)
         .ceil()
         .min((GRID_SIZE - 1) as f32) as i32;
-    let min_tz = ((camera_settings.focus_xz.y - visible_radius) / TILE_SIZE)
+    let min_tz = ((focus.z - visible_radius) / TILE_SIZE)
         .floor()
         .max(0.0) as i32;
-    let max_tz = ((camera_settings.focus_xz.y + visible_radius) / TILE_SIZE)
+    let max_tz = ((focus.z + visible_radius) / TILE_SIZE)
         .ceil()
         .min((GRID_SIZE - 1) as f32) as i32;
 
