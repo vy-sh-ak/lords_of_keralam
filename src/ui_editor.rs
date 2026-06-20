@@ -14,7 +14,7 @@ use std::any::TypeId;
 
 use crate::editor_config::EditorState;
 use crate::terrain::{DrawMode, FallOffGenerator, MapGenerator};
-use crate::terrain::grid_generator::WorldGrid;
+use crate::world_grid_config::WorldGrid;
 use curve_editor::height_curve_editor;
 
 pub mod widgets;
@@ -567,11 +567,6 @@ fn render_map_generator_editor(ui: &mut egui::Ui, world: &mut World) {
                     ui.label("Show Grid");
                     ui.checkbox(&mut grid.show_grid, "");
                 });
-                ui.horizontal(|ui| {
-                    ui.label("Grid Fixed");
-                    ui.checkbox(&mut grid.grid_fixed, "");
-                    ui.label("(center of map)");
-                });
             });
         });
 
@@ -656,3 +651,4 @@ fn render_resources_tab(
         }
     }
 }
+

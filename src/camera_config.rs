@@ -5,8 +5,11 @@ use bevy::{
     prelude::*,
 };
 
-use crate::ui_editor::UIKeyboardCapture;
 use crate::world_direction::WorldDirection;
+use crate::{
+    ui_editor::UIKeyboardCapture,
+    world_grid_config::{GRID_SIZE, TILE_SIZE, WorldGrid},
+};
 
 const DEFAULT_ORBIT_PITCH: f32 = 0.0;
 
@@ -66,6 +69,8 @@ impl Plugin for CameraPlugin {
                 (
                     (rotate_horizontal, rotate_vertical).chain(),
                     move_focus,
+                    clamp_camera_to_grid,
+                    // grid_fixed_snap,
                     zoom,
                     sync_world_direction,
                 )
@@ -74,6 +79,28 @@ impl Plugin for CameraPlugin {
             );
     }
 }
+
+fn clamp_camera_to_grid(
+    mut world_grid: ResMut<WorldGrid>,
+    mut camera_settings: ResMut<CameraSettings>,
+    mut camera: Single<&mut Transform, With<Camera>>,
+) {
+    let max_world = (GRID_SIZE - 1) as f32 * TILE_SIZE;
+    camera_settings.focus_xz = camera_settings
+        .focus_xz
+        .clamp(Vec2::ZERO, Vec2::new(max_world, max_world));
+}
+
+// fn grid_fixed_snap(
+//     mut world_grid: ResMut<WorldGrid>,
+//     mut camera_settings: ResMut<CameraSettings>,
+// ) {
+//     if world_grid.grid_fixed && !world_grid.grid_fixed_previous {
+//         camera_settings.focus_xz = Vec2::ZERO;
+//         camera_settings.target_zoom = 0.0;
+//     }
+//     world_grid.grid_fixed_previous = world_grid.grid_fixed;
+// }
 
 fn move_focus(
     keyboard: Res<ButtonInput<KeyCode>>,

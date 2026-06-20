@@ -6,7 +6,7 @@ use bevy::{
 use bevy_persistent::Persistent;
 
 use crate::{
-    camera_plugin::{CameraSettings, CameraSystems},
+    camera_config::{CameraSettings, CameraSystems},
     terrain::{
         MapGenerator, TerrainSampler, generate_map_data,
         terrain_material::{TerrainMaterial, build_terrain_material},

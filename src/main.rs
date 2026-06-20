@@ -1,4 +1,5 @@
 use bevy::{
+    asset::AssetPlugin,
     diagnostic::FrameTimeDiagnosticsPlugin,
     light::CascadeShadowConfigBuilder,
     pbr::wireframe::{WireframeConfig, WireframePlugin},
@@ -12,24 +13,30 @@ use bevy::{
 use bevy_egui::EguiPlugin;
 use bevy_inspector_egui::DefaultInspectorConfigPlugin;
 
-mod camera_plugin;
+mod camera_config;
 mod compass;
 mod persistence;
 mod terrain;
 mod ui_editor;
 mod world_direction;
 mod editor_config;
+mod world_grid_config;
 
 fn main() {
     App::new()
         .add_plugins((
-            DefaultPlugins.set(RenderPlugin {
-                render_creation: RenderCreation::Automatic(WgpuSettings {
-                    features: WgpuFeatures::POLYGON_MODE_LINE,
+            DefaultPlugins
+                .set(AssetPlugin {
+                    watch_for_changes_override: Some(true),
+                    ..default()
+                })
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(WgpuSettings {
+                        features: WgpuFeatures::POLYGON_MODE_LINE,
+                        ..default()
+                    }),
                     ..default()
                 }),
-                ..default()
-            }),
             FrameTimeDiagnosticsPlugin::default(),
             EguiPlugin::default(),
             WireframePlugin::default(),
@@ -39,10 +46,10 @@ fn main() {
             global: false,
             default_color: Color::BLACK.into(),
         })
-        .add_plugins(camera_plugin::CameraPlugin)
+        .add_plugins(camera_config::CameraPlugin)
         .add_plugins(terrain::MapGenerator::default().plugin())
         .add_plugins(terrain::EndlessTerrainPlugin)
-        .add_plugins(terrain::GridGeneratorPlugin)
+        .add_plugins(world_grid_config::GridGeneratorPlugin)
         .add_plugins(
             ui_editor::UIEditor::default()
                 .with_toggle_key(KeyCode::F1)
@@ -52,7 +59,7 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (compass::update_compass_system.after(camera_plugin::CameraSystems::UpdateState),),
+            (compass::update_compass_system.after(camera_config::CameraSystems::UpdateState),),
         )
         .run();
 }
