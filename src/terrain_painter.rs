@@ -10,6 +10,7 @@ use bevy_persistent::Persistent;
 use crate::terrain::endless_terrain::{sync_endless_terrain, EndlessTerrainState};
 use crate::terrain::{MapGenerator, TerrainSampler};
 use crate::ui_editor::UIKeyboardCapture;
+use crate::world_grid_config::WorldGrid;
 
 #[derive(Resource, Default)]
 pub struct SculptMap {
@@ -47,15 +48,34 @@ impl Default for BrushConfig {
     }
 }
 
+#[derive(Resource, Default)]
+pub struct SyncGridRequest(pub bool);
+
 pub struct TerrainPainterPlugin;
 
 impl Plugin for TerrainPainterPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(SculptMap::default())
             .insert_resource(BrushConfig::default())
+            .insert_resource(SyncGridRequest::default())
             .add_systems(Update, sculpt_paint_system.before(sync_endless_terrain))
-            .add_systems(Update, draw_custom_cursor);
+            .add_systems(Update, draw_custom_cursor)
+            .add_systems(Update, sync_grid_system);
     }
+}
+
+fn sync_grid_system(
+    mut request: ResMut<SyncGridRequest>,
+    mut world_grid: ResMut<WorldGrid>,
+    terrain_sampler: Res<TerrainSampler>,
+    map_generator: Res<Persistent<MapGenerator>>,
+    sculpt_map: Res<SculptMap>,
+) {
+    if !request.0 {
+        return;
+    }
+    request.0 = false;
+    sync_grid_heights(&mut world_grid, &terrain_sampler, &map_generator, &sculpt_map);
 }
 
 fn sculpt_paint_system(
@@ -146,12 +166,111 @@ fn get_terrain_hit_position(
     Some(Vec3::new(plane_pos.x, height, plane_pos.z))
 }
 
+fn get_terrain_hit_position_with_sculpt(
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    window: &Window,
+    terrain_sampler: &TerrainSampler,
+    map_generator: &MapGenerator,
+    sculpt_map: &SculptMap,
+) -> Option<Vec3> {
+    let cursor_pos = window.cursor_position()?;
+    let ray = camera.viewport_to_world(camera_transform, cursor_pos).ok()?;
+    let distance = ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Dir3::Y))?;
+    let plane_pos = ray.get_point(distance);
+    let height = sample_total_height(
+        terrain_sampler,
+        map_generator,
+        sculpt_map,
+        Vec3::new(plane_pos.x, 0.0, plane_pos.z),
+    );
+    Some(Vec3::new(plane_pos.x, height, plane_pos.z))
+}
+
+fn vertex_total_height(
+    nx: i64,
+    nz: i64,
+    terrain_sampler: &TerrainSampler,
+    map_generator: &MapGenerator,
+    sculpt_map: &SculptMap,
+    chunk_span_val: f32,
+    half: f32,
+) -> f32 {
+    // Mesh vertex world positions are at n - 0.5 for integer n
+    // (because odd map_chunk_size (241) gives half = 120.5)
+    let span = chunk_span_val as i64;
+    let half_shift = (half - 0.5) as i64; // 120
+
+    // X: vertex index increases with world_x
+    let shifted_x = nx + half_shift;
+    let cx = shifted_x.div_euclid(span) as i32;
+    let ix = (shifted_x - cx as i64 * span) as usize;
+
+    // Z: vertex index DECREASES as world_z increases (mesh z = half - index)
+    let shifted_z = nz + half_shift;
+    let cz = shifted_z.div_euclid(span) as i32;
+    let iz = (cz as i64 * span + (2 * half_shift as i64 + 1) - shifted_z) as usize;
+
+    let vertex_x = cx as f32 * chunk_span_val + ix as f32 - half;
+    let vertex_z = cz as f32 * chunk_span_val + half - iz as f32;
+
+    let base = terrain_sampler.sample_height(map_generator, vertex_x, vertex_z);
+
+    if let Some(chunk) = sculpt_map.chunks.get(&IVec2::new(cx, cz)) {
+        if iz < chunk.len() && ix < chunk[0].len() {
+            return base + chunk[iz][ix];
+        }
+    }
+    base
+}
+
+pub(crate) fn sample_total_height(
+    terrain_sampler: &TerrainSampler,
+    map_generator: &MapGenerator,
+    sculpt_map: &SculptMap,
+    world_pos: Vec3,
+) -> f32 {
+    let chunk_span_val = crate::terrain::chunk_span(map_generator);
+    let half = map_generator.map_chunk_size as f32 / 2.0;
+
+    // Vertex positions are at n - 0.5 for integer n.
+    // Bilinear interpolation between the 4 surrounding vertices.
+    let n_x = (world_pos.x + 0.5).floor() as i64;
+    let n_z = (world_pos.z + 0.5).floor() as i64;
+
+    let frac_x = world_pos.x - (n_x as f32 - 0.5);
+    let frac_z = world_pos.z - (n_z as f32 - 0.5);
+
+    let h00 = vertex_total_height(n_x, n_z, terrain_sampler, map_generator, sculpt_map, chunk_span_val, half);
+    let h10 = vertex_total_height(n_x + 1, n_z, terrain_sampler, map_generator, sculpt_map, chunk_span_val, half);
+    let h01 = vertex_total_height(n_x, n_z + 1, terrain_sampler, map_generator, sculpt_map, chunk_span_val, half);
+    let h11 = vertex_total_height(n_x + 1, n_z + 1, terrain_sampler, map_generator, sculpt_map, chunk_span_val, half);
+
+    let h0 = h00 + (h10 - h00) * frac_x;
+    let h1 = h01 + (h11 - h01) * frac_x;
+    h0 + (h1 - h0) * frac_z
+}
+
+pub(crate) fn sync_grid_heights(
+    world_grid: &mut WorldGrid,
+    terrain_sampler: &TerrainSampler,
+    map_generator: &MapGenerator,
+    sculpt_map: &SculptMap,
+) {
+    for (_pos, tile) in world_grid.tiles.iter_mut() {
+        let world = _pos.grid_to_world();
+        tile.terrain_height =
+            sample_total_height(terrain_sampler, map_generator, sculpt_map, world);
+    }
+}
+
 fn draw_custom_cursor(
     brush_config: Res<BrushConfig>,
     camera_query: Single<(&Camera, &GlobalTransform)>,
     window: Single<&Window>,
     terrain_sampler: Res<TerrainSampler>,
     map_generator: Res<Persistent<MapGenerator>>,
+    sculpt_map: Res<SculptMap>,
     mut gizmos: Gizmos,
 ) {
     if !brush_config.active {
@@ -159,9 +278,14 @@ fn draw_custom_cursor(
     }
 
     let (camera, camera_transform) = camera_query.into_inner();
-    let Some(hit_pos) =
-        get_terrain_hit_position(camera, camera_transform, &window, &terrain_sampler, &map_generator)
-    else {
+    let Some(hit_pos) = get_terrain_hit_position_with_sculpt(
+        camera,
+        camera_transform,
+        &window,
+        &terrain_sampler,
+        &map_generator,
+        &sculpt_map,
+    ) else {
         return;
     };
 
@@ -172,12 +296,23 @@ fn draw_custom_cursor(
         TerrainTool::Smooth => Color::srgb(1.0, 0.8, 0.2),
     };
 
-    gizmos.circle(
-        Isometry3d::new(
-            hit_pos + Vec3::Y * 0.05,
-            Quat::from_rotation_arc(Vec3::Z, Vec3::Y),
-        ),
-        brush_config.radius,
-        color,
-    );
+    let segments = 64;
+    let lift = 0.1;
+    let mut prev: Option<Vec3> = None;
+    for i in 0..=segments {
+        let angle = i as f32 / segments as f32 * std::f32::consts::TAU;
+        let x = hit_pos.x + brush_config.radius * angle.cos();
+        let z = hit_pos.z + brush_config.radius * angle.sin();
+        let h = sample_total_height(
+            &terrain_sampler,
+            &map_generator,
+            &sculpt_map,
+            Vec3::new(x, 0.0, z),
+        );
+        let p = Vec3::new(x, h + lift, z);
+        if let Some(prev) = prev {
+            gizmos.line(prev, p, color);
+        }
+        prev = Some(p);
+    }
 }

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_egui::egui;
 
-use crate::terrain_painter::{BrushConfig, SculptMap, TerrainTool};
+use crate::terrain_painter::{BrushConfig, SculptMap, SyncGridRequest, TerrainTool};
 
 const TOOL_NAMES: &[(TerrainTool, &str)] = &[
     (TerrainTool::Raise, "Raise"),
@@ -52,6 +52,12 @@ pub fn toolbar_contents(world: &mut World, ui: &mut egui::Ui) {
             }
         }
     });
+
+    drop(brush_config);
+
+    if ui.button("Sync Grid").clicked() {
+        world.resource_mut::<SyncGridRequest>().0 = true;
+    }
 }
 
 pub fn tab_contents(world: &mut World, ui: &mut egui::Ui) {
@@ -107,4 +113,9 @@ pub fn tab_contents(world: &mut World, ui: &mut egui::Ui) {
     ui.separator();
     let sculpt_map = world.resource::<SculptMap>();
     ui.label(format!("Sculpted chunks: {}", sculpt_map.chunks.len()));
+
+    ui.separator();
+    if ui.button("Sync Grid to Sculpt").clicked() {
+        world.resource_mut::<SyncGridRequest>().0 = true;
+    }
 }

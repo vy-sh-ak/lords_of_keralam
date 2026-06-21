@@ -6,6 +6,7 @@ use bevy_persistent::Persistent;
 
 use crate::camera_config::CameraSettings;
 use crate::terrain::{MapGenerator, TerrainSampler};
+use crate::terrain_painter::{sample_total_height, SculptMap};
 
 pub const TILE_SIZE: f32 = 4.0;
 pub const GRID_SIZE: usize = 1024;
@@ -76,6 +77,27 @@ impl WorldGrid {
         })
     }
 
+    pub fn ensure_tile_with_sculpt(
+        &mut self,
+        pos: TilePos,
+        terrain_sampler: &TerrainSampler,
+        map_generator: &MapGenerator,
+        sculpt_map: &SculptMap,
+    ) -> &mut Tile {
+        self.tiles.entry(pos).or_insert_with(|| {
+            let world = pos.grid_to_world();
+            Tile {
+                terrain_height: sample_total_height(
+                    terrain_sampler,
+                    map_generator,
+                    sculpt_map,
+                    world,
+                ),
+                occupied: false,
+            }
+        })
+    }
+
     pub fn get_tile(&self, pos: TilePos) -> Option<&Tile> {
         self.tiles.get(&pos)
     }
@@ -89,12 +111,28 @@ impl Plugin for GridGeneratorPlugin {
     }
 }
 
+fn ensure_tile_with_sculpt<'a>(
+    world_grid: &'a mut WorldGrid,
+    pos: TilePos,
+    terrain_sampler: &TerrainSampler,
+    map_generator: &MapGenerator,
+    sculpt_map: Option<&SculptMap>,
+) -> &'a mut Tile {
+    match sculpt_map {
+        Some(sculpt) => {
+            world_grid.ensure_tile_with_sculpt(pos, terrain_sampler, map_generator, sculpt)
+        }
+        None => world_grid.ensure_tile(pos, terrain_sampler, map_generator),
+    }
+}
+
 fn update_grid(
     mut gizmos: Gizmos,
     mut world_grid: ResMut<WorldGrid>,
     camera_settings: Res<CameraSettings>,
     terrain_sampler: Res<TerrainSampler>,
     map_generator: Res<Persistent<MapGenerator>>,
+    sculpt_map: Option<Res<SculptMap>>,
 ) {
     if !world_grid.show_grid {
         return;
@@ -115,15 +153,22 @@ fn update_grid(
         .min((GRID_SIZE) as f32) as i32;
     let color = Color::srgba(1.0, 1.0, 1.0, 0.2);
 
+    let sculpt_ref = sculpt_map.as_deref();
+
     for x in min_x..=max_x {
         let mut points = Vec::new();
 
         for y in min_y..=max_y {
             let pos = TilePos::new(x, y);
 
-            let height = world_grid
-                .ensure_tile(pos, &terrain_sampler, &map_generator)
-                .terrain_height;
+            let height = ensure_tile_with_sculpt(
+                &mut world_grid,
+                pos,
+                &terrain_sampler,
+                &map_generator,
+                sculpt_ref,
+            )
+            .terrain_height;
 
             points.push(Vec3::new(
                 x as f32 * TILE_SIZE,
@@ -141,9 +186,14 @@ fn update_grid(
         for x in min_x..=max_x {
             let pos = TilePos::new(x, y);
 
-            let height = world_grid
-                .ensure_tile(pos, &terrain_sampler, &map_generator)
-                .terrain_height;
+            let height = ensure_tile_with_sculpt(
+                &mut world_grid,
+                pos,
+                &terrain_sampler,
+                &map_generator,
+                sculpt_ref,
+            )
+            .terrain_height;
 
             points.push(Vec3::new(
                 x as f32 * TILE_SIZE,
@@ -164,9 +214,14 @@ fn update_grid(
     for x in 0..GRID_SIZE as i32 {
         let pos = TilePos::new(x, 0);
 
-        let height = world_grid
-            .ensure_tile(pos, &terrain_sampler, &map_generator)
-            .terrain_height;
+        let height = ensure_tile_with_sculpt(
+            &mut world_grid,
+            pos,
+            &terrain_sampler,
+            &map_generator,
+            sculpt_ref,
+        )
+        .terrain_height;
 
         bottom_points.push(Vec3::new(x as f32 * TILE_SIZE, height + 0.1, 0.0));
     }
@@ -174,9 +229,14 @@ fn update_grid(
     for x in 0..GRID_SIZE as i32 {
         let pos = TilePos::new(x, GRID_SIZE as i32 - 1);
 
-        let height = world_grid
-            .ensure_tile(pos, &terrain_sampler, &map_generator)
-            .terrain_height;
+        let height = ensure_tile_with_sculpt(
+            &mut world_grid,
+            pos,
+            &terrain_sampler,
+            &map_generator,
+            sculpt_ref,
+        )
+        .terrain_height;
 
         top_points.push(Vec3::new(x as f32 * TILE_SIZE, height + 0.1, max_world));
     }
@@ -184,9 +244,14 @@ fn update_grid(
     for y in 0..GRID_SIZE as i32 {
         let pos = TilePos::new(0, y);
 
-        let height = world_grid
-            .ensure_tile(pos, &terrain_sampler, &map_generator)
-            .terrain_height;
+        let height = ensure_tile_with_sculpt(
+            &mut world_grid,
+            pos,
+            &terrain_sampler,
+            &map_generator,
+            sculpt_ref,
+        )
+        .terrain_height;
 
         left_points.push(Vec3::new(0.0, height + 0.1, y as f32 * TILE_SIZE));
     }
@@ -194,9 +259,14 @@ fn update_grid(
     for y in 0..GRID_SIZE as i32 {
         let pos = TilePos::new(GRID_SIZE as i32 - 1, y);
 
-        let height = world_grid
-            .ensure_tile(pos, &terrain_sampler, &map_generator)
-            .terrain_height;
+        let height = ensure_tile_with_sculpt(
+            &mut world_grid,
+            pos,
+            &terrain_sampler,
+            &map_generator,
+            sculpt_ref,
+        )
+        .terrain_height;
 
         right_points.push(Vec3::new(max_world, height + 0.1, y as f32 * TILE_SIZE));
     }
