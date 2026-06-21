@@ -12,6 +12,7 @@ impl MeshGenerator {
         height_multiplier: f32,
         height_curve: &HeightCurve,
         level_of_detail: u32,
+        sculpt_offset_map: Option<&[Vec<f32>]>,
     ) -> MeshData {
         let bordered_size = height_map.first().map_or(0, |row| row.len());
         let map_chunk_size = bordered_size - 2;
@@ -75,11 +76,19 @@ impl MeshGenerator {
                     (y_f - 1.0) / (mesh_size_unsimplified_f - 1.0),
                 );
                 let height: f32 = height_curve.sample(height_map[y][x]) * height_multiplier;
-                let vertex_pos: Vec3 = Vec3::new(x_f - half_width, height, half_height - y_f);
+                let sculpt = sculpt_offset_map.map_or(0.0, |m| m[y][x]);
+                let vertex_pos: Vec3 =
+                    Vec3::new(x_f - half_width, height + sculpt, half_height - y_f);
 
                 mesh_data.add_vertex(vertex_pos, percent, vertex_index);
             }
         }
+
+        let get_vertex_height = |x: usize, y: usize| -> f32 {
+            let base = height_curve.sample(height_map[y][x]) * height_multiplier;
+            let sculpt = sculpt_offset_map.map_or(0.0, |m| m[y][x]);
+            base + sculpt
+        };
 
         let mut normals = vec![Vec3::ZERO; vertices_per_line * vertices_per_line];
         for &y in &y_indices {
@@ -93,10 +102,10 @@ impl MeshGenerator {
                     continue;
                 }
                 let mesh_index = vertex_indices_map[x][y] as usize;
-                let h_left = height_curve.sample(height_map[y][x - 1]) * height_multiplier;
-                let h_right = height_curve.sample(height_map[y][x + 1]) * height_multiplier;
-                let h_up = height_curve.sample(height_map[y - 1][x]) * height_multiplier;
-                let h_down = height_curve.sample(height_map[y + 1][x]) * height_multiplier;
+                let h_left = get_vertex_height(x - 1, y);
+                let h_right = get_vertex_height(x + 1, y);
+                let h_up = get_vertex_height(x, y - 1);
+                let h_down = get_vertex_height(x, y + 1);
                 normals[mesh_index] = Vec3::new(h_left - h_right, 2.0, h_down - h_up).normalize();
             }
         }

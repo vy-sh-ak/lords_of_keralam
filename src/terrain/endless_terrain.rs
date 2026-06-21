@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::{
     pbr::wireframe::{Wireframe, WireframeColor}, prelude::*
@@ -11,6 +11,7 @@ use crate::{
         MapGenerator, TerrainSampler, generate_map_data,
         terrain_material::{TerrainMaterial, build_terrain_material},
     },
+    terrain_painter::SculptMap,
 };
 
 use super::{
@@ -24,9 +25,9 @@ const ENDLESS_TERRAIN_WIREFRAME_COLOR: Color = Color::srgb(0.5, 0.5, 0.5);
 const MIN_VISIBLE_CHUNK_MARGIN: f32 = 1.5;
 
 #[derive(Component)]
-struct EndlessTerrainChunk {
-    level_of_detail: u32,
-    terrain_epoch: u64,
+pub(crate) struct EndlessTerrainChunk {
+    pub level_of_detail: u32,
+    pub terrain_epoch: u64,
 }
 
 struct DesiredChunk {
@@ -36,10 +37,11 @@ struct DesiredChunk {
 }
 
 #[derive(Resource)]
-struct EndlessTerrainState {
-    active_chunks: HashMap<IVec2, Entity>,
-    terrain_epoch: u64,
-    material_handle: Option<Handle<TerrainMaterial>>,
+pub(crate) struct EndlessTerrainState {
+    pub active_chunks: HashMap<IVec2, Entity>,
+    pub terrain_epoch: u64,
+    pub material_handle: Option<Handle<TerrainMaterial>>,
+    pub dirty_chunks: HashSet<IVec2>,
 }
 
 impl Default for EndlessTerrainState {
@@ -48,7 +50,14 @@ impl Default for EndlessTerrainState {
             active_chunks: Default::default(),
             terrain_epoch: Default::default(),
             material_handle: None,
+            dirty_chunks: Default::default(),
         }
+    }
+}
+
+impl EndlessTerrainState {
+    pub(crate) fn mark_chunk_dirty(&mut self, coord: IVec2) {
+        self.dirty_chunks.insert(coord);
     }
 }
 
@@ -111,7 +120,7 @@ for distance in [5.0, 10.0, 15.0, 20.0] {
     }
 }
 
-fn sync_endless_terrain(
+pub(crate) fn sync_endless_terrain(
     mut commands: Commands,
     camera_settings: Res<CameraSettings>,
     camera_transform: Single<&Transform, With<Camera>>,
@@ -127,6 +136,7 @@ fn sync_endless_terrain(
     )>,
     terrain_sampler: Res<TerrainSampler>,
     map_generator: Res<Persistent<MapGenerator>>,
+    sculpt_map: Option<Res<SculptMap>>,
 ) {
     if map_generator.draw_mode != DrawMode::EndlessTerrain {
         for (entity, _, _, _) in &mut chunk_query {
@@ -205,8 +215,9 @@ fn sync_endless_terrain(
             let needs_rebuild =
                 chunk.level_of_detail != lod || chunk.terrain_epoch != state.terrain_epoch;
             if needs_rebuild && remaining_build_budget > 0 {
+                let sculpt = sculpt_map.as_ref().and_then(|m| m.chunks.get(&coord));
                 let mesh =
-                    build_chunk_mesh(coord, lod, terrain_sampler.as_ref(), &map_generator);
+                    build_chunk_mesh(coord, lod, terrain_sampler.as_ref(), &map_generator, sculpt);
                 *mesh_handle = Mesh3d(meshes.add(mesh));
                 *material_comp = MeshMaterial3d(material_handle.clone());
                 commands.entity(entity).insert(EndlessTerrainChunk {
@@ -223,8 +234,9 @@ fn sync_endless_terrain(
                 continue;
             }
 
+            let sculpt = sculpt_map.as_ref().and_then(|m| m.chunks.get(&coord));
             let mesh =
-                build_chunk_mesh(coord, lod, terrain_sampler.as_ref(), &map_generator);
+                build_chunk_mesh(coord, lod, terrain_sampler.as_ref(), &map_generator, sculpt);
             let mut entity_commands = commands.spawn((
                 EndlessTerrainChunk {
                     level_of_detail: lod,
@@ -243,6 +255,34 @@ fn sync_endless_terrain(
             let entity = entity_commands.id();
             state.active_chunks.insert(coord, entity);
             remaining_build_budget -= 1;
+        }
+    }
+
+    // Process dirty chunks (from sculpt painting) within remaining build budget
+    if remaining_build_budget > 0 && !state.dirty_chunks.is_empty() {
+        let dirty: Vec<IVec2> = state.dirty_chunks.drain().collect();
+        for coord in dirty {
+            if remaining_build_budget == 0 {
+                state.dirty_chunks.insert(coord);
+                break;
+            }
+            if let Some(&entity) = state.active_chunks.get(&coord) {
+                if let Ok((_, chunk, mut mesh_handle, mut material_comp)) =
+                    chunk_query.get_mut(entity)
+                {
+                    let sculpt = sculpt_map.as_ref().and_then(|m| m.chunks.get(&coord));
+                    let mesh = build_chunk_mesh(
+                        coord,
+                        chunk.level_of_detail,
+                        terrain_sampler.as_ref(),
+                        &map_generator,
+                        sculpt,
+                    );
+                    *mesh_handle = Mesh3d(meshes.add(mesh));
+                    *material_comp = MeshMaterial3d(material_handle.clone());
+                    remaining_build_budget -= 1;
+                }
+            }
         }
     }
 }
@@ -289,6 +329,7 @@ fn build_chunk_mesh(
     level_of_detail: u32,
     terrain_sampler: &TerrainSampler,
     map_generator: &MapGenerator,
+    sculpt_data: Option<&Vec<Vec<f32>>>,
 ) -> Mesh {
     let map_data = generate_map_data(terrain_sampler, coord, map_generator);
     MeshGenerator::generate_terrain_mesh(
@@ -296,6 +337,7 @@ fn build_chunk_mesh(
         map_generator.terrain_data.height_multiplier,
         &map_generator.terrain_data.height_curve,
         level_of_detail,
+        sculpt_data.map(|m| m.as_slice()),
     )
     .create_mesh()
 }

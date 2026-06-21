@@ -286,6 +286,7 @@ fn create_render_assets(
                 map_generator.terrain_data.height_multiplier,
                 &map_generator.terrain_data.height_curve,
                 map_generator.level_of_detail,
+                None,
             )
             .create_mesh(),
             texture: None,

@@ -17,6 +17,7 @@ mod camera_config;
 mod compass;
 mod persistence;
 mod terrain;
+mod terrain_painter;
 mod ui_editor;
 mod world_direction;
 mod editor_config;
@@ -26,10 +27,10 @@ fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins
-                .set(AssetPlugin {
-                    watch_for_changes_override: Some(true),
-                    ..default()
-                })
+                // .set(AssetPlugin {
+                //     watch_for_changes_override: Some(true),
+                //     ..default()
+                // })
                 .set(RenderPlugin {
                     render_creation: RenderCreation::Automatic(WgpuSettings {
                         features: WgpuFeatures::POLYGON_MODE_LINE,
@@ -49,6 +50,7 @@ fn main() {
         .add_plugins(camera_config::CameraPlugin)
         .add_plugins(terrain::MapGenerator::default().plugin())
         .add_plugins(terrain::EndlessTerrainPlugin)
+        .add_plugins(terrain_painter::TerrainPainterPlugin)
         .add_plugins(world_grid_config::GridGeneratorPlugin)
         .add_plugins(
             ui_editor::UIEditor::default()
@@ -80,11 +82,12 @@ fn setup(
         Projection::from(PerspectiveProjection::default()),
         Transform::from_xyz(0.0, 2.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    // debugging cube
     commands.spawn((
         Name::new("Cube"),
         Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
         MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
-        Transform::from_xyz(0.0, 2.0, 0.0),
+        Transform::from_xyz(0.0, 20.0, 0.0),
     ));
 
     // Sun

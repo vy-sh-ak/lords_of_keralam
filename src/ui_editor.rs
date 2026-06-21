@@ -14,6 +14,7 @@ use std::any::TypeId;
 
 use crate::editor_config::EditorState;
 use crate::terrain::{DrawMode, FallOffGenerator, MapGenerator};
+use crate::terrain_painter;
 use crate::world_grid_config::WorldGrid;
 use curve_editor::height_curve_editor;
 
@@ -69,6 +70,7 @@ enum EguiWindow {
     Inspector,
     Resources,
     MapGenerator,
+    TerrainPainter,
 }
 
 #[derive(Eq, PartialEq)]
@@ -95,6 +97,7 @@ impl UiState {
                 EguiWindow::Inspector,
                 EguiWindow::Resources,
                 EguiWindow::MapGenerator,
+                EguiWindow::TerrainPainter,
             ]
         } else {
             vec![EguiWindow::GameView]
@@ -106,7 +109,7 @@ impl UiState {
             let tree = dock_state.main_surface_mut();
             // GameView takes most space; Inspector on the right
             let [game, _inspector] =
-                tree.split_right(NodeIndex::root(), 0.75, vec![EguiWindow::Inspector,EguiWindow::MapGenerator]);
+                tree.split_right(NodeIndex::root(), 0.75, vec![EguiWindow::Inspector,EguiWindow::MapGenerator,EguiWindow::TerrainPainter]);
             // Hierarchy on the left
             let [game, _hierarchy] = tree.split_left(game, 0.2, vec![EguiWindow::Hierarchy]);
             // TerrainConfig and Resources at the bottom (collapsed by default)
@@ -169,8 +172,22 @@ fn show_ui_system(world: &mut World) {
             kb.pointer_in_viewport = true;
             return;
         }
-        ui_state.ui(world, &mut egui_context.get_mut());
+
         let ctx = egui_context.get_mut();
+
+        // Terrain painter toolbar (shown when sculpt mode is active)
+        let show_toolbar = world
+            .get_resource::<terrain_painter::BrushConfig>()
+            .is_some_and(|b| b.active);
+        if show_toolbar {
+            egui::TopBottomPanel::top("terrain_toolbar")
+                .min_height(0.0)
+                .show(ctx, |ui| {
+                    terrain_painter::ui::toolbar_contents(world, ui);
+                });
+        }
+
+        ui_state.ui(world, ctx);
         let in_viewport = ui_state.pointer_in_viewport;
         let mut kb = world.resource_mut::<UIKeyboardCapture>();
         kb.pointer_in_viewport = in_viewport;
@@ -265,6 +282,11 @@ impl egui_dock::TabViewer for TabViewer<'_> {
                     render_map_generator_editor(ui, self.world);
                 });
             }
+            EguiWindow::TerrainPainter => {
+                ui.push_id("terrain_painter_tab", |ui| {
+                    terrain_painter::ui::tab_contents(self.world, ui);
+                });
+            }
         }
 
         *self.pointer_in_viewport = ui
@@ -279,6 +301,7 @@ impl egui_dock::TabViewer for TabViewer<'_> {
             EguiWindow::Inspector => "Inspector".into(),
             EguiWindow::Resources => "Resources".into(),
             EguiWindow::MapGenerator => "Map Generator".into(),
+            EguiWindow::TerrainPainter => "Terrain Painter".into(),
         }
     }
 
@@ -286,42 +309,6 @@ impl egui_dock::TabViewer for TabViewer<'_> {
         !matches!(window, EguiWindow::GameView)
     }
 }
-
-// fn render_editor<T>(
-//     ui: &mut egui::Ui,
-//     world: &mut World,
-// )
-// where
-//     T: Resource
-//         + Clone
-//         + Reflect
-//         + Serialize
-//         + DeserializeOwned,
-// {
-//     let type_registry = world.resource::<AppTypeRegistry>().0.clone();
-//     let type_registry = type_registry.read();
-
-//     let mut editor =
-//         world.resource_mut::<EditorState<T>>();
-
-//     let _ = reflect_inspector::ui_for_value(
-//         &mut editor.edited,
-//         ui,
-//         &type_registry,
-//     );
-
-//     let edited = editor.edited.clone();
-//     drop(editor);
-
-//     let mut persistent = world.resource_mut::<Persistent<T>>();
-
-//     let current = &**persistent as &dyn Reflect;
-//     if !edited.reflect_partial_eq(current).unwrap_or(true) {
-//         *persistent.get_mut() = edited;
-//         persistent.set_changed();
-//     }
-// }
-
 
 fn render_map_generator_editor(ui: &mut egui::Ui, world: &mut World) {
     let type_registry = world.resource::<AppTypeRegistry>().0.clone();
