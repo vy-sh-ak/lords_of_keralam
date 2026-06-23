@@ -13,14 +13,9 @@ const TOOL_NAMES: &[(TerrainTool, &str)] = &[
 pub fn tab_contents(world: &mut World, ui: &mut egui::Ui) {
     let mut brush_config = world.resource_mut::<BrushConfig>();
 
+    ui.add_space(8.0);
     ui.heading("Terrain Painter");
     ui.separator();
-
-    // ui.horizontal(|ui| {
-    //     ui.label("Active:");
-    //     ui.add(egui::Checkbox::without_text(&mut brush_config.active));
-    // });
-
     ui.horizontal(|ui| {
         ui.label("Tool:");
         let current_label = TOOL_NAMES
@@ -37,12 +32,16 @@ pub fn tab_contents(world: &mut World, ui: &mut egui::Ui) {
             });
     });
 
-    ui.add(egui::Slider::new(&mut brush_config.radius, 0.5..=50.0)
-        .text("Radius")
-        .fixed_decimals(1));
-    ui.add(egui::Slider::new(&mut brush_config.strength, 0.1..=20.0)
-        .text("Strength")
-        .fixed_decimals(1));
+    ui.add(
+        egui::Slider::new(&mut brush_config.radius, 0.5..=50.0)
+            .text("Radius")
+            .fixed_decimals(1),
+    );
+    ui.add(
+        egui::Slider::new(&mut brush_config.strength, 0.1..=20.0)
+            .text("Strength")
+            .fixed_decimals(1),
+    );
 
     if brush_config.tool == TerrainTool::Flatten {
         ui.separator();
