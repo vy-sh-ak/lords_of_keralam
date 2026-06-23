@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 use bevy_egui::egui;
 
-use crate::terrain_painter::{BrushConfig, SculptMap, SyncGridRequest, TerrainTool};
+use crate::terrain::endless_terrain::EndlessTerrainState;
+use crate::terrain_painter::{BrushConfig, SculptMap, SyncGridRequest, TerrainTool, UndoEntry, UndoStack};
 
 const TOOL_NAMES: &[(TerrainTool, &str)] = &[
     (TerrainTool::Raise, "Raise"),
@@ -62,6 +65,80 @@ pub fn tab_contents(world: &mut World, ui: &mut egui::Ui) {
     ui.separator();
     let sculpt_map = world.resource::<SculptMap>();
     ui.label(format!("Sculpted chunks: {}", sculpt_map.chunks.len()));
+
+    ui.separator();
+    let (can_undo, can_redo) = {
+        let stack = world.resource::<UndoStack>();
+        (stack.can_undo(), stack.can_redo())
+    };
+    ui.horizontal(|ui| {
+        if ui.add_enabled(can_undo, egui::Button::new("Undo")).clicked() {
+            let entry = { world.resource_mut::<UndoStack>().undo_entries.pop() };
+            if let Some(entry) = entry {
+                let coords: Vec<IVec2> = entry.old_chunks.keys().copied().collect();
+                let redo_chunks = {
+                    let sculpt_map = world.resource::<SculptMap>();
+                    coords.iter().map(|&c| (c, sculpt_map.chunks.get(&c).cloned())).collect::<HashMap<_, _>>()
+                };
+                world.resource_mut::<UndoStack>().redo_entries.push(UndoEntry {
+                    old_chunks: redo_chunks,
+                });
+                {
+                    let mut sculpt_map = world.resource_mut::<SculptMap>();
+                    for (coord, old_data) in entry.old_chunks {
+                        match old_data {
+                            Some(data) => {
+                                sculpt_map.chunks.insert(coord, data);
+                            }
+                            None => {
+                                sculpt_map.chunks.remove(&coord);
+                            }
+                        }
+                    }
+                }
+                {
+                    let mut endless_state = world.resource_mut::<EndlessTerrainState>();
+                    for coord in coords {
+                        endless_state.mark_chunk_dirty(coord);
+                    }
+                }
+                world.resource_mut::<SyncGridRequest>().0 = true;
+            }
+        }
+        if ui.add_enabled(can_redo, egui::Button::new("Redo")).clicked() {
+            let entry = { world.resource_mut::<UndoStack>().redo_entries.pop() };
+            if let Some(entry) = entry {
+                let coords: Vec<IVec2> = entry.old_chunks.keys().copied().collect();
+                let undo_chunks = {
+                    let sculpt_map = world.resource::<SculptMap>();
+                    coords.iter().map(|&c| (c, sculpt_map.chunks.get(&c).cloned())).collect::<HashMap<_, _>>()
+                };
+                world.resource_mut::<UndoStack>().undo_entries.push(UndoEntry {
+                    old_chunks: undo_chunks,
+                });
+                {
+                    let mut sculpt_map = world.resource_mut::<SculptMap>();
+                    for (coord, old_data) in entry.old_chunks {
+                        match old_data {
+                            Some(data) => {
+                                sculpt_map.chunks.insert(coord, data);
+                            }
+                            None => {
+                                sculpt_map.chunks.remove(&coord);
+                            }
+                        }
+                    }
+                }
+                {
+                    let mut endless_state = world.resource_mut::<EndlessTerrainState>();
+                    for coord in coords {
+                        endless_state.mark_chunk_dirty(coord);
+                    }
+                }
+                world.resource_mut::<SyncGridRequest>().0 = true;
+            }
+        }
+    });
 
     ui.separator();
     if ui.button("Sync Grid to Sculpt").clicked() {
