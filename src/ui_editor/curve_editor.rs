@@ -45,12 +45,12 @@ pub fn height_curve_editor(ui: &mut egui::Ui, curve: &mut HeightCurve) -> bool {
             let x = plot_rect.left() + t * plot_rect.width();
             painter.line_segment(
                 [Pos2::new(x, plot_rect.top()), Pos2::new(x, plot_rect.bottom())],
-                Stroke::new(1.0, Color32::from_gray(46)),
+                Stroke::new(1.0_f32, Color32::from_gray(46)),
             );
             let y = plot_rect.bottom() - t * plot_rect.height();
             painter.line_segment(
                 [Pos2::new(plot_rect.left(), y), Pos2::new(plot_rect.right(), y)],
-                Stroke::new(1.0, Color32::from_gray(46)),
+                Stroke::new(1.0_f32, Color32::from_gray(46)),
             );
         }
 
@@ -58,7 +58,7 @@ pub fn height_curve_editor(ui: &mut egui::Ui, curve: &mut HeightCurve) -> bool {
         painter.rect_stroke(
             plot_rect,
             0.0,
-            Stroke::new(1.0, Color32::from_gray(90)),
+            Stroke::new(1.0_f32, Color32::from_gray(90)),
             egui::StrokeKind::Outside,
         );
 
@@ -90,7 +90,7 @@ pub fn height_curve_editor(ui: &mut egui::Ui, curve: &mut HeightCurve) -> bool {
             let mut prev = to_screen(points[0].input, points[0].output);
             for point in points.iter().skip(1) {
                 let curr = to_screen(point.input, point.output);
-                painter.line_segment([prev, curr], Stroke::new(2.5, Color32::from_rgb(76, 175, 80)));
+                painter.line_segment([prev, curr], Stroke::new(2.5_f32, Color32::from_rgb(76, 175, 80)));
                 prev = curr;
             }
         }
@@ -118,7 +118,7 @@ pub fn height_curve_editor(ui: &mut egui::Ui, curve: &mut HeightCurve) -> bool {
             };
 
             painter.circle_filled(pos, r, fill);
-            painter.circle_stroke(pos, r, Stroke::new(1.0, Color32::from_gray(170)));
+            painter.circle_stroke(pos, r, Stroke::new(1.0_f32, Color32::from_gray(170)));
         }
 
         // Axis titles

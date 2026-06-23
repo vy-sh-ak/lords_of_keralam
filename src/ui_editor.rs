@@ -7,19 +7,19 @@ use bevy_egui::{EguiPrimaryContextPass, PrimaryEguiContext};
 use bevy_inspector_egui::bevy_egui::EguiContextSettings;
 use bevy_inspector_egui::bevy_inspector::hierarchy::{SelectedEntities, hierarchy_ui};
 use bevy_inspector_egui::bevy_inspector::{self, ui_for_entity_with_children};
-use bevy_inspector_egui::reflect_inspector;
-use bevy_persistent::Persistent;
-use egui_dock::{DockArea, DockState, NodeIndex, Style};
 use std::any::TypeId;
 
-use crate::editor_config::EditorState;
-use crate::terrain::{DrawMode, FallOffGenerator, MapGenerator};
-use crate::terrain_painter;
-use crate::world_grid_config::WorldGrid;
-use curve_editor::height_curve_editor;
+use bevy_persistent::Persistent;
 
-pub mod widgets;
+use crate::editor_config::EditorState;
+use crate::terrain::{FallOffGenerator, MapGenerator};
+use crate::terrain_painter::BrushConfig;
+use crate::world_grid_config::WorldGrid;
+
 pub mod curve_editor;
+pub mod map_generator_ui;
+pub mod terrain_sculpting_ui;
+pub mod widgets;
 
 #[derive(Resource, Clone)]
 pub struct UIEditor {
@@ -63,14 +63,24 @@ pub struct UIKeyboardCapture {
     pub pointer_in_viewport: bool,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-enum EguiWindow {
-    GameView,
+// ---- Navigation enums ----
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MainSection {
+    Map,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeftPanelKind {
     Hierarchy,
-    Inspector,
     Resources,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RightPanelKind {
     MapGenerator,
     TerrainPainter,
+    Inspector,
 }
 
 #[derive(Eq, PartialEq)]
@@ -78,9 +88,12 @@ enum InspectorSelection {
     Entities,
     Resource(TypeId, String),
 }
+
 #[derive(Resource)]
 pub struct UiState {
-    dock_state: DockState<EguiWindow>,
+    selected_section: MainSection,
+    active_left_panel: Option<LeftPanelKind>,
+    active_right_panel: Option<RightPanelKind>,
     viewport_rect: egui::Rect,
     selected_entities: SelectedEntities,
     selection: InspectorSelection,
@@ -90,35 +103,10 @@ pub struct UiState {
 
 impl UiState {
     fn new(starts_open: bool) -> Self {
-        let initial_tabs = if starts_open {
-            vec![
-                EguiWindow::GameView,
-                EguiWindow::Hierarchy,
-                EguiWindow::Inspector,
-                EguiWindow::Resources,
-                EguiWindow::MapGenerator,
-                EguiWindow::TerrainPainter,
-            ]
-        } else {
-            vec![EguiWindow::GameView]
-        };
-
-        let mut dock_state = DockState::new(initial_tabs);
-
-        if starts_open {
-            let tree = dock_state.main_surface_mut();
-            // GameView takes most space; Inspector on the right
-            let [game, _inspector] =
-                tree.split_right(NodeIndex::root(), 0.75, vec![EguiWindow::Inspector,EguiWindow::MapGenerator,EguiWindow::TerrainPainter]);
-            // Hierarchy on the left
-            let [game, _hierarchy] = tree.split_left(game, 0.2, vec![EguiWindow::Hierarchy]);
-            // TerrainConfig and Resources at the bottom (collapsed by default)
-            let [_game, bottom] = tree.split_below(game, 0.7, vec![EguiWindow::Resources]);
-            tree[bottom].set_collapsed(true);
-        }
-
         Self {
-            dock_state,
+            selected_section: MainSection::Map,
+            active_left_panel: None,
+            active_right_panel: None,
             viewport_rect: egui::Rect::NOTHING,
             selected_entities: SelectedEntities::default(),
             selection: InspectorSelection::Entities,
@@ -177,13 +165,13 @@ fn show_ui_system(world: &mut World) {
 
         // Terrain painter toolbar (shown when sculpt mode is active)
         let show_toolbar = world
-            .get_resource::<terrain_painter::BrushConfig>()
+            .get_resource::<BrushConfig>()
             .is_some_and(|b| b.active);
         if show_toolbar {
             egui::TopBottomPanel::top("terrain_toolbar")
                 .min_height(0.0)
                 .show(ctx, |ui| {
-                    terrain_painter::ui::toolbar_contents(world, ui);
+                    terrain_sculpting_ui::toolbar_contents(world, ui);
                 });
         }
 
@@ -225,354 +213,187 @@ fn set_camera_viewport(
     }
 }
 
-
 impl UiState {
     fn ui(&mut self, world: &mut World, ctx: &mut egui::Context) {
-        let mut tab_viewer = TabViewer {
-            world,
-            viewport_rect: &mut self.viewport_rect,
-            selected_entities: &mut self.selected_entities,
-            selection: &mut self.selection,
-            pointer_in_viewport: &mut self.pointer_in_viewport,
-        };
-        DockArea::new(&mut self.dock_state)
-            .style(Style::from_egui(ctx.style().as_ref()))
-            .show(ctx, &mut tab_viewer);
-    }
-}
-
-struct TabViewer<'a> {
-    world: &'a mut World,
-    selected_entities: &'a mut SelectedEntities,
-    selection: &'a mut InspectorSelection,
-    viewport_rect: &'a mut egui::Rect,
-    pointer_in_viewport: &'a mut bool,
-}
-
-impl egui_dock::TabViewer for TabViewer<'_> {
-    type Tab = EguiWindow;
-
-    fn ui(&mut self, ui: &mut egui::Ui, window: &mut Self::Tab) {
-        match window {
-            EguiWindow::GameView => {
-                *self.viewport_rect = ui.clip_rect();
-            }
-            EguiWindow::Hierarchy => {
-                ui.push_id("hierarchy_tab", |ui| {
-                    let selected = hierarchy_ui(self.world, ui, self.selected_entities);
-                    if selected {
-                        *self.selection = InspectorSelection::Entities;
+        // ---- Top bar: sections row + editor buttons row ----
+        egui::TopBottomPanel::top("editor_top_bar")
+            .min_height(80.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let is_map = self.selected_section == MainSection::Map;
+                    if ui.add(egui::Button::new("Map").selected(is_map)).clicked() {
+                        self.selected_section = MainSection::Map;
                     }
                 });
-            }
-            EguiWindow::Inspector => {
-                ui.push_id("inspector_tab", |ui| {
-                    render_inspector_tab(ui, self.world, self.selected_entities, self.selection);
-                });
-            }
-            EguiWindow::Resources => {
-                ui.push_id("resources_tab", |ui| {
-                    let type_registry = self.world.resource::<AppTypeRegistry>().0.clone();
-                    let type_registry = type_registry.read();
-                    render_resources_tab(ui, &type_registry, self.selection);
-                });
-            }
-            EguiWindow::MapGenerator => {
-                ui.push_id("map_generator_tab", |ui| {
-                    render_map_generator_editor(ui, self.world);
-                });
-            }
-            EguiWindow::TerrainPainter => {
-                ui.push_id("terrain_painter_tab", |ui| {
-                    terrain_painter::ui::tab_contents(self.world, ui);
-                });
-            }
-        }
 
-        *self.pointer_in_viewport = ui
-            .ctx()
-            .rect_contains_pointer(LayerId::background(), self.viewport_rect.shrink(16.));
-    }
+                ui.separator();
 
-    fn title(&mut self, window: &mut Self::Tab) -> egui_dock::egui::WidgetText {
-        match window {
-            EguiWindow::GameView => "Game View".into(),
-            EguiWindow::Hierarchy => "Hierarchy".into(),
-            EguiWindow::Inspector => "Inspector".into(),
-            EguiWindow::Resources => "Resources".into(),
-            EguiWindow::MapGenerator => "Map Generator".into(),
-            EguiWindow::TerrainPainter => "Terrain Painter".into(),
-        }
-    }
+                ui.horizontal(|ui| {
+                    // Quick actions
+                    ui.vertical(|ui| {
+                        ui.set_width(60.0);
+                        let mut editor = world.resource_mut::<EditorState<MapGenerator>>();
+                        let mut uv = editor.edited.show_uv_wireframe;
+                        if ui.checkbox(&mut uv, "UV").changed()
+                            && uv != editor.edited.show_uv_wireframe
+                        {
+                            editor.edited.show_uv_wireframe = uv;
+                            let edited = editor.edited.clone();
+                            drop(editor);
+                            let mut persistent = world.resource_mut::<Persistent<MapGenerator>>();
+                            *persistent.get_mut() = edited;
+                            if persistent.terrain_data.use_falloff_map
+                                && persistent.falloff_map.is_empty()
+                            {
+                                let map_size = persistent.map_chunk_size as usize + 2;
+                                persistent.falloff_map =
+                                    FallOffGenerator::generate_fall_off_map(map_size);
+                            }
+                            persistent.set_changed();
+                        } else {
+                            drop(editor);
+                        }
 
-    fn clear_background(&self, window: &Self::Tab) -> bool {
-        !matches!(window, EguiWindow::GameView)
-    }
-}
-
-fn render_map_generator_editor(ui: &mut egui::Ui, world: &mut World) {
-    let type_registry = world.resource::<AppTypeRegistry>().0.clone();
-    let type_registry = type_registry.read();
-
-    // Scope the editor borrow so it's dropped before we access WorldGrid below.
-    let changed = {
-        let mut editor = world.resource_mut::<EditorState<MapGenerator>>();
-        let mut changed = false;
-
-        // ---- Main Settings ----
-        egui::Grid::new("map_gen_main").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            ui.label("Level of Detail");
-            changed |= ui
-                .add(egui::Slider::new(&mut editor.edited.level_of_detail, 0..=6))
-                .changed();
-            ui.end_row();
-
-            ui.label("Draw Mode");
-            egui::ComboBox::from_id_salt("draw_mode")
-                .selected_text(editor.edited.draw_mode.label())
-                .show_ui(ui, |ui| {
-                    for &mode in &DrawMode::ALL {
-                        changed |= ui
-                            .selectable_value(&mut editor.edited.draw_mode, mode, mode.label())
-                            .changed();
-                    }
-                });
-            ui.end_row();
-
-            ui.label("Show UV Wireframe");
-            changed |= ui.checkbox(&mut editor.edited.show_uv_wireframe, "").changed();
-            ui.end_row();
-        });
-
-        ui.add_space(8.0);
-
-        // ---- Noise Data ----
-        egui::CollapsingHeader::new("Noise Data")
-            .default_open(true)
-            .show(ui, |ui| {
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    changed |= reflect_inspector::ui_for_value(
-                        &mut editor.edited.noise_data,
-                        ui,
-                        &type_registry,
-                    );
-                });
-            });
-
-        ui.add_space(8.0);
-
-        // ---- Terrain Data ----
-        egui::CollapsingHeader::new("Terrain Data")
-            .default_open(false)
-            .show(ui, |ui| {
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    changed |= reflect_inspector::ui_for_value(
-                        &mut editor.edited.terrain_data,
-                        ui,
-                        &type_registry,
-                    );
-                });
-            });
-
-        ui.add_space(8.0);
-
-        // ---- Texture Data ----
-        egui::CollapsingHeader::new("Texture Data")
-            .default_open(false)
-            .show(ui, |ui| {
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    let tex = &mut editor.edited.texture_data;
-
-                    ui.horizontal(|ui| {
-                        ui.label("Min Height");
-                        changed |= ui
-                            .add(egui::Slider::new(&mut tex.min_height, -100.0..=100.0))
-                            .changed();
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Max Height");
-                        changed |= ui
-                            .add(egui::Slider::new(&mut tex.max_height, -100.0..=100.0))
-                            .changed();
+                        let mut grid = world.resource_mut::<WorldGrid>();
+                        ui.checkbox(&mut grid.show_grid, "Grid");
                     });
 
                     ui.separator();
-                    ui.strong("Texture Layers");
-                    ui.add_space(4.0);
 
-                    let mut remove_idx: Option<usize> = None;
-
-                    for i in 0..tex.layers.len() {
-                        let _ = egui::Frame::group(ui.style())
-                            .inner_margin(egui::Margin::symmetric(8, 4))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.strong(format!("#{}", i + 1));
-                                    if tex.layers.len() > 1
-                                        && ui.add(egui::Button::new("✕").small()).clicked()
-                                    {
-                                        remove_idx = Some(i);
-                                    }
-                                });
-
-                                let layer = &mut tex.layers[i];
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Texture");
-                                    let textures = list_texture_files();
-                                    if !textures.is_empty() {
-                                        egui::ComboBox::from_id_salt(format!("tex_combo_{}", i))
-                                            .selected_text(&layer.texture_path)
-                                            .show_ui(ui, |ui| {
-                                                for tex in &textures {
-                                                    changed |= ui
-                                                        .selectable_value(
-                                                            &mut layer.texture_path,
-                                                            tex.clone(),
-                                                            tex,
-                                                        )
-                                                        .changed();
-                                                }
-                                            });
-                                    }
-                                    changed |= ui
-                                        .add(
-                                            egui::TextEdit::singleline(&mut layer.texture_path)
-                                                .desired_width(140.0),
-                                        )
-                                        .changed();
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Start Height");
-                                    changed |= ui
-                                        .add(egui::Slider::new(&mut layer.start_height, 0.0..=1.0))
-                                        .changed();
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Blend");
-                                    changed |= ui
-                                        .add(egui::Slider::new(&mut layer.blend_strength, 0.0..=1.0))
-                                        .changed();
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Tint");
-                                    let mut ec = egui::Rgba::from_rgba_unmultiplied(
-                                        layer.tint.red,
-                                        layer.tint.green,
-                                        layer.tint.blue,
-                                        layer.tint.alpha,
-                                    );
-                                    changed |= egui::color_picker::color_edit_button_rgba(
-                                        ui,
-                                        &mut ec,
-                                        egui::color_picker::Alpha::Opaque,
-                                    )
-                                    .changed();
-                                    layer.tint =
-                                        LinearRgba::new(ec.r(), ec.g(), ec.b(), ec.a());
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Tint Strength");
-                                    changed |= ui
-                                        .add(egui::Slider::new(&mut layer.tint_strength, 0.0..=1.0))
-                                        .changed();
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Tex Scale");
-                                    changed |= ui
-                                        .add(egui::Slider::new(&mut layer.texture_scale, 0.1..=500.0))
-                                        .changed();
-                                });
-                            });
+                    // Editor buttons (64px tall)
+                    let is_active = self.active_right_panel == Some(RightPanelKind::MapGenerator);
+                    if ui
+                        .add(
+                            egui::Button::new("Map Gen")
+                                .selected(is_active)
+                                .min_size(egui::vec2(0.0, 45.0)),
+                        )
+                        .clicked()
+                    {
+                        self.active_right_panel = if is_active {
+                            None
+                        } else {
+                            Some(RightPanelKind::MapGenerator)
+                        };
                     }
 
-                    if let Some(idx) = remove_idx {
-                        tex.layers.remove(idx);
-                        changed = true;
+                    let is_active = self.active_right_panel == Some(RightPanelKind::TerrainPainter);
+                    if ui
+                        .add(
+                            egui::Button::new("Terrain Paint")
+                                .selected(is_active)
+                                .min_size(egui::vec2(0.0, 45.0)),
+                        )
+                        .clicked()
+                    {
+                        self.active_right_panel = if is_active {
+                            None
+                        } else {
+                            Some(RightPanelKind::TerrainPainter)
+                        };
                     }
+                });
+            });
 
+        // ---- Left sidebar: H / R buttons ----
+        egui::SidePanel::left("left_sidebar")
+            .resizable(false)
+            .default_width(32.0)
+            .width_range(32.0..=32.0)
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(8.0);
+                    let is_h = self.active_left_panel == Some(LeftPanelKind::Hierarchy);
+                    if ui.add(egui::Button::new("H").selected(is_h)).clicked() {
+                        self.active_left_panel = if is_h {
+                            None
+                        } else {
+                            Some(LeftPanelKind::Hierarchy)
+                        };
+                    }
                     ui.add_space(4.0);
-                    if tex.layers.len() < 8 {
-                        if ui.button("＋ Add Layer").clicked() {
-                            let last = tex.layers.last().map(|l| l.start_height).unwrap_or(0.0);
-                            let textures = list_texture_files();
-                            let default_tex = textures.first().cloned().unwrap_or_else(|| "textures/grass.png".to_string());
-                            tex.layers.push(crate::terrain::data::TextureLayerConfig {
-                                texture_path: default_tex,
-                                start_height: (last + 1.0) * 0.5,
-                                blend_strength: 0.1,
-                                tint_strength: 0.0,
-                                texture_scale: 10.0,
-                                tint: LinearRgba::new(0.5, 0.5, 0.5, 1.0),
-                            });
-                            changed = true;
+                    let is_r = self.active_left_panel == Some(LeftPanelKind::Resources);
+                    if ui.add(egui::Button::new("R").selected(is_r)).clicked() {
+                        self.active_left_panel = if is_r {
+                            None
+                        } else {
+                            Some(LeftPanelKind::Resources)
+                        };
+                    }
+                });
+            });
+
+        // ---- Left panel (conditional) ----
+        let left_kind = self.active_left_panel;
+        if let Some(kind) = left_kind {
+            egui::SidePanel::left("left_panel")
+                .resizable(true)
+                .default_width(200.0)
+                .width_range(80.0..=500.0)
+                .show(ctx, |ui| match kind {
+                    LeftPanelKind::Hierarchy => {
+                        ui.push_id("hierarchy_panel", |ui| {
+                            let selected = hierarchy_ui(world, ui, &mut self.selected_entities);
+                            if selected {
+                                self.selection = InspectorSelection::Entities;
+                                self.active_right_panel = Some(RightPanelKind::Inspector);
+                            }
+                        });
+                    }
+                    LeftPanelKind::Resources => {
+                        ui.push_id("resources_panel", |ui| {
+                            let type_registry = world.resource::<AppTypeRegistry>().0.clone();
+                            let type_registry = type_registry.read();
+                            render_resources_tab(ui, &type_registry, &mut self.selection);
+                        });
+                        if matches!(self.selection, InspectorSelection::Resource(_, _)) {
+                            self.active_right_panel = Some(RightPanelKind::Inspector);
                         }
                     }
                 });
-            });
+        }
 
-        ui.add_space(8.0);
-
-        // ---- Height Curve ----
-        egui::CollapsingHeader::new("Height Curve")
-            .default_open(false)
-            .show(ui, |ui| {
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    changed |= height_curve_editor(ui, &mut editor.edited.terrain_data.height_curve);
+        // ---- Right panel (conditional) ----
+        let right_kind = self.active_right_panel;
+        if let Some(kind) = right_kind {
+            egui::SidePanel::right("right_panel")
+                .resizable(true)
+                .default_width(400.0)
+                .width_range(200.0..=800.0)
+                .show(ctx, |ui| match kind {
+                    RightPanelKind::MapGenerator => {
+                        ui.push_id("map_gen_editor", |ui| {
+                            map_generator_ui::render_map_generator_editor(ui, world);
+                        });
+                    }
+                    RightPanelKind::TerrainPainter => {
+                        ui.push_id("terrain_painter_editor", |ui| {
+                            terrain_sculpting_ui::tab_contents(world, ui);
+                        });
+                    }
+                    RightPanelKind::Inspector => {
+                        ui.push_id("inspector_panel", |ui| {
+                            render_inspector_tab(
+                                ui,
+                                world,
+                                &self.selected_entities,
+                                &self.selection,
+                            );
+                        });
+                    }
                 });
+        }
+
+        // ---- Central game view (transparent frame so 3D viewport shows through) ----
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| {
+                self.viewport_rect = ui.clip_rect();
             });
 
-        // ---- Endless LOD Bands ----
-        egui::CollapsingHeader::new("LOD Bands")
-            .default_open(false)
-            .show(ui, |ui| {
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    changed |= reflect_inspector::ui_for_value(
-                        &mut editor.edited.endless_lod_bands,
-                        ui,
-                        &type_registry,
-                    );
-                });
-            });
-
-        changed
-    };
-
-    // ---- Grid Settings ----
-    ui.add_space(8.0);
-    egui::CollapsingHeader::new("Grid Settings")
-        .default_open(true)
-        .show(ui, |ui| {
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                let mut grid = world.resource_mut::<WorldGrid>();
-                ui.horizontal(|ui| {
-                    ui.label("Show Grid");
-                    ui.checkbox(&mut grid.show_grid, "");
-                });
-            });
-        });
-
-    // ---- Live preview sync ----
-    if !changed {
-        return;
+        self.pointer_in_viewport =
+            ctx.rect_contains_pointer(LayerId::background(), self.viewport_rect.shrink(16.));
     }
-
-    let editor = world.resource_mut::<EditorState<MapGenerator>>();
-    let edited = editor.edited.clone();
-    drop(editor);
-
-    let mut persistent = world.resource_mut::<Persistent<MapGenerator>>();
-    *persistent.get_mut() = edited;
-    if persistent.terrain_data.use_falloff_map && persistent.falloff_map.is_empty() {
-        let map_size = persistent.map_chunk_size as usize + 2;
-        persistent.falloff_map = FallOffGenerator::generate_fall_off_map(map_size);
-    }
-    persistent.set_changed();
 }
 
 fn render_inspector_tab(
@@ -597,23 +418,6 @@ fn render_inspector_tab(
     }
 }
 
-fn list_texture_files() -> Vec<String> {
-    let assets_dir = std::path::Path::new("assets/textures");
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(assets_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "png") {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    files.push(format!("textures/{}", name));
-                }
-            }
-        }
-    }
-    files.sort();
-    files
-}
-
 fn render_resources_tab(
     ui: &mut egui::Ui,
     type_registry: &TypeRegistry,
@@ -633,9 +437,8 @@ fn render_resources_tab(
 
     for (name, type_id) in resources {
         let selected = matches!(selection, InspectorSelection::Resource(id, _) if *id == type_id);
-        if ui.selectable_label(selected, name).clicked() {
+        if ui.add(egui::Button::new(name).selected(selected)).clicked() {
             *selection = InspectorSelection::Resource(type_id, name.to_string());
         }
     }
 }
-
