@@ -15,6 +15,7 @@ use bevy_inspector_egui::DefaultInspectorConfigPlugin;
 
 mod camera_config;
 mod compass;
+mod map_asset;
 mod persistence;
 mod terrain;
 mod terrain_painter;
@@ -51,6 +52,7 @@ fn main() {
         .add_plugins(terrain::MapGenerator::default().plugin())
         .add_plugins(terrain::EndlessTerrainPlugin)
         .add_plugins(terrain_painter::TerrainPainterPlugin)
+        .insert_resource(map_asset::ActiveMap::default())
         .add_plugins(world_grid_config::GridGeneratorPlugin)
         .add_plugins(
             ui_editor::UIEditor::default()

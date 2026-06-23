@@ -17,6 +17,7 @@ use crate::terrain_painter::BrushConfig;
 use crate::world_grid_config::WorldGrid;
 
 pub mod curve_editor;
+pub mod map_data_ui;
 pub mod map_generator_ui;
 pub mod terrain_sculpting_ui;
 pub mod widgets;
@@ -80,6 +81,7 @@ enum LeftPanelKind {
 enum RightPanelKind {
     MapGenerator,
     TerrainPainter,
+    MapData,
     Inspector,
 }
 
@@ -280,8 +282,25 @@ impl UiState {
                         };
                     }
 
+                    let is_active = self.active_right_panel == Some(RightPanelKind::MapData);
+                    if ui
+                        .add(
+                            egui::Button::new("Map Data")
+                                .selected(is_active)
+                                .min_size(egui::vec2(0.0, 45.0)),
+                        )
+                        .clicked()
+                    {
+                        self.active_right_panel = if is_active {
+                            None
+                        } else {
+                            Some(RightPanelKind::MapData)
+                        };
+                    }
+
                     let mut brush_config = world.resource_mut::<BrushConfig>();
-                    brush_config.active = self.active_right_panel == Some(RightPanelKind::TerrainPainter);
+                    brush_config.active =
+                        self.active_right_panel == Some(RightPanelKind::TerrainPainter);
                 });
             });
 
@@ -322,12 +341,14 @@ impl UiState {
                 .width_range(80.0..=500.0)
                 .show(ctx, |ui| match kind {
                     LeftPanelKind::Hierarchy => {
-                        ui.push_id("hierarchy_panel", |ui| {
-                            let selected = hierarchy_ui(world, ui, &mut self.selected_entities);
-                            if selected {
-                                self.selection = InspectorSelection::Entities;
-                                self.active_right_panel = Some(RightPanelKind::Inspector);
-                            }
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.push_id("hierarchy_panel", |ui| {
+                                let selected = hierarchy_ui(world, ui, &mut self.selected_entities);
+                                if selected {
+                                    self.selection = InspectorSelection::Entities;
+                                    self.active_right_panel = Some(RightPanelKind::Inspector);
+                                }
+                            });
                         });
                     }
                     LeftPanelKind::Resources => {
@@ -359,6 +380,11 @@ impl UiState {
                     RightPanelKind::TerrainPainter => {
                         ui.push_id("terrain_painter_editor", |ui| {
                             terrain_sculpting_ui::tab_contents(world, ui);
+                        });
+                    }
+                    RightPanelKind::MapData => {
+                        ui.push_id("map_data_editor", |ui| {
+                            map_data_ui::render(ui, world);
                         });
                     }
                     RightPanelKind::Inspector => {
@@ -413,22 +439,25 @@ fn render_resources_tab(
     type_registry: &TypeRegistry,
     selection: &mut InspectorSelection,
 ) {
-    let mut resources: Vec<_> = type_registry
-        .iter()
-        .filter(|reg| reg.data::<bevy::ecs::reflect::ReflectResource>().is_some())
-        .map(|reg| {
-            (
-                reg.type_info().type_path_table().short_path(),
-                reg.type_id(),
-            )
-        })
-        .collect();
-    resources.sort_by(|(a, _), (b, _)| a.cmp(b));
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        let mut resources: Vec<_> = type_registry
+            .iter()
+            .filter(|reg| reg.data::<bevy::ecs::reflect::ReflectResource>().is_some())
+            .map(|reg| {
+                (
+                    reg.type_info().type_path_table().short_path(),
+                    reg.type_id(),
+                )
+            })
+            .collect();
+        resources.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-    for (name, type_id) in resources {
-        let selected = matches!(selection, InspectorSelection::Resource(id, _) if *id == type_id);
-        if ui.add(egui::Button::new(name).selected(selected)).clicked() {
-            *selection = InspectorSelection::Resource(type_id, name.to_string());
+        for (name, type_id) in resources {
+            let selected =
+                matches!(selection, InspectorSelection::Resource(id, _) if *id == type_id);
+            if ui.add(egui::Button::new(name).selected(selected)).clicked() {
+                *selection = InspectorSelection::Resource(type_id, name.to_string());
+            }
         }
-    }
+    });
 }

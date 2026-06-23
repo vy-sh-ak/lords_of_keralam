@@ -1,6 +1,6 @@
 use super::{MeshGenerator, texture_generator::texture_from_height_map};
 use crate::{
-    editor_config::{AutosaveAppExt, EditorStateAppExt},
+    editor_config::EditorStateAppExt,
     persistence,
     terrain::{
         FallOffGenerator, NoiseData, TerrainData, TerrainSampler, TextureData,
@@ -210,7 +210,6 @@ impl Plugin for MapGeneratorPlugin {
             .register_type::<MapGenerator>()
             .insert_resource(map_generator)
             .add_editor_state::<MapGenerator>()
-            .add_autosave::<MapGenerator>()
             .insert_resource(TerrainSampler::default())
             .add_systems(Startup, setup_noise_plane)
             .add_systems(

@@ -3,6 +3,7 @@ pub mod brush;
 use std::collections::HashMap;
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use bevy_persistent::Persistent;
 
@@ -11,8 +12,48 @@ use crate::terrain::{MapGenerator, TerrainSampler};
 use crate::ui_editor::UIKeyboardCapture;
 use crate::world_grid_config::WorldGrid;
 
-#[derive(Resource, Default)]
+mod sculpt_map_serde {
+    use std::collections::HashMap;
+
+    use bevy::math::IVec2;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(
+        chunks: &HashMap<IVec2, Vec<Vec<f32>>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let pairs: Vec<(String, Vec<Vec<f32>>)> = chunks
+            .iter()
+            .map(|(coord, data)| (format!("{},{}", coord.x, coord.y), data.clone()))
+            .collect();
+        pairs.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<HashMap<IVec2, Vec<Vec<f32>>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let pairs: Vec<(String, Vec<Vec<f32>>)> = Vec::deserialize(deserializer)?;
+        let mut map = HashMap::with_capacity(pairs.len());
+        for (key, data) in pairs {
+            if let Some((x, y)) = key.split_once(',') {
+                if let (Ok(x), Ok(y)) = (x.parse::<i32>(), y.parse::<i32>()) {
+                    map.insert(IVec2::new(x, y), data);
+                }
+            }
+        }
+        Ok(map)
+    }
+}
+
+#[derive(Resource, Default, Serialize, Deserialize)]
 pub struct SculptMap {
+    #[serde(with = "sculpt_map_serde")]
     pub chunks: HashMap<IVec2, Vec<Vec<f32>>>,
 }
 
