@@ -163,18 +163,6 @@ fn show_ui_system(world: &mut World) {
 
         let ctx = egui_context.get_mut();
 
-        // Terrain painter toolbar (shown when sculpt mode is active)
-        let show_toolbar = world
-            .get_resource::<BrushConfig>()
-            .is_some_and(|b| b.active);
-        if show_toolbar {
-            egui::TopBottomPanel::top("terrain_toolbar")
-                .min_height(0.0)
-                .show(ctx, |ui| {
-                    terrain_sculpting_ui::toolbar_contents(world, ui);
-                });
-        }
-
         ui_state.ui(world, ctx);
         let in_viewport = ui_state.pointer_in_viewport;
         let mut kb = world.resource_mut::<UIKeyboardCapture>();
@@ -276,7 +264,6 @@ impl UiState {
                             Some(RightPanelKind::MapGenerator)
                         };
                     }
-
                     let is_active = self.active_right_panel == Some(RightPanelKind::TerrainPainter);
                     if ui
                         .add(
@@ -292,6 +279,9 @@ impl UiState {
                             Some(RightPanelKind::TerrainPainter)
                         };
                     }
+
+                    let mut brush_config = world.resource_mut::<BrushConfig>();
+                    brush_config.active = self.active_right_panel == Some(RightPanelKind::TerrainPainter);
                 });
             });
 
