@@ -1,31 +1,77 @@
 use bevy::{
-    diagnostic::FrameTimeDiagnosticsPlugin, light::CascadeShadowConfigBuilder, prelude::*,
-    text::DEFAULT_FONT_DATA,
+    asset::AssetPlugin,
+    diagnostic::FrameTimeDiagnosticsPlugin,
+    light::CascadeShadowConfigBuilder,
+    pbr::wireframe::{WireframeConfig, WireframePlugin},
+    prelude::*,
+    render::{
+        RenderPlugin,
+        render_resource::WgpuFeatures,
+        settings::{RenderCreation, WgpuSettings},
+    },
 };
-use bevy_voxel_world::{custom_meshing::CHUNK_SIZE_F, prelude::*};
+use bevy_egui::EguiPlugin;
+use bevy_inspector_egui::DefaultInspectorConfigPlugin;
 
-mod camera_plugin;
+mod camera_config;
 mod compass;
+mod persistence;
 mod terrain;
+mod terrain_painter;
+mod ui_editor;
 mod world_direction;
+mod editor_config;
+mod world_grid_config;
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, FrameTimeDiagnosticsPlugin::default()))
-        .add_plugins(VoxelWorldPlugin::with_config(terrain::MainWorld::default()))
-        .add_plugins(terrain::terrain_mesh::SmoothTerrainPlugin)
-        .add_plugins(camera_plugin::CameraPlugin)
+        .add_plugins((
+            DefaultPlugins
+                // .set(AssetPlugin {
+                //     watch_for_changes_override: Some(true),
+                //     ..default()
+                // })
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(WgpuSettings {
+                        features: WgpuFeatures::POLYGON_MODE_LINE,
+                        ..default()
+                    }),
+                    ..default()
+                }),
+            FrameTimeDiagnosticsPlugin::default(),
+            EguiPlugin::default(),
+            WireframePlugin::default(),
+            DefaultInspectorConfigPlugin,
+        ))
+        .insert_resource(WireframeConfig {
+            global: false,
+            default_color: Color::BLACK.into(),
+        })
+        .add_plugins(camera_config::CameraPlugin)
+        .add_plugins(terrain::MapGenerator::default().plugin())
+        .add_plugins(terrain::EndlessTerrainPlugin)
+        .add_plugins(terrain_painter::TerrainPainterPlugin)
+        .add_plugins(world_grid_config::GridGeneratorPlugin)
+        .add_plugins(
+            ui_editor::UIEditor::default()
+                .with_toggle_key(KeyCode::F1)
+                .starts_open(true)
+                .plugin(),
+        )
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (
-                compass::update_compass_system.after(camera_plugin::CameraSystems::UpdateState),
-                terrain::update_fps_text,
-            ),
+            (compass::update_compass_system.after(camera_config::CameraSystems::UpdateState),),
         )
         .run();
 }
-fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut fonts: ResMut<Assets<Font>>) {
+
+fn setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     commands.spawn((
         Name::new("Camera"),
         Camera3d::default(),
@@ -34,22 +80,14 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut fonts: ResM
             ..default()
         },
         Projection::from(PerspectiveProjection::default()),
-        Transform::from_xyz(
-            terrain::CAMERA_VEC3.x,
-            terrain::CAMERA_VEC3.y,
-            terrain::CAMERA_VEC3.z,
-        )
-        .looking_at(Vec3::ZERO, Vec3::Y),
-        // This tells bevy_voxel_world to use this cameras transform to calculate spawning area
-        VoxelWorldCamera::<terrain::MainWorld>::default(),
-        DistanceFog {
-            color: *ClearColor::default(),
-            falloff: FogFalloff::Linear {
-                start: 125.0 * CHUNK_SIZE_F,
-                end: 200.0 * CHUNK_SIZE_F,
-            },
-            ..default()
-        },
+        Transform::from_xyz(0.0, 2.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    // debugging cube
+    commands.spawn((
+        Name::new("Cube"),
+        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+        MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
+        Transform::from_xyz(0.0, 20.0, 0.0),
     ));
 
     // Sun
@@ -75,33 +113,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut fonts: ResM
         brightness: 100.0,
         affects_lightmapped_meshes: true,
     });
-
-    // UI overlay camera
-    // commands.spawn((
-    //     Camera2d,
-    //     Camera {
-    //         order: 1,
-    //         ..default()
-    //     },
-    // ));
-
-    let font = fonts.add(Font::try_from_bytes(DEFAULT_FONT_DATA.to_vec()).unwrap());
-    commands.spawn((
-        Text::new("FPS: -- (--)\nFrame: -- ms"),
-        TextFont {
-            font,
-            font_size: 18.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(12.0),
-            top: Val::Px(12.0),
-            ..default()
-        },
-        terrain::FpsText,
-    ));
 
     compass::spawn_compass(commands, asset_server);
 }
