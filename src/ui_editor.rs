@@ -16,6 +16,7 @@ use crate::terrain::{FallOffGenerator, MapGenerator};
 use crate::terrain_painter::BrushConfig;
 use crate::world_grid_config::WorldGrid;
 
+pub mod camera_config_ui;
 pub mod curve_editor;
 pub mod map_data_ui;
 pub mod map_generator_ui;
@@ -83,6 +84,7 @@ enum RightPanelKind {
     TerrainPainter,
     MapData,
     Inspector,
+    CameraConfig,
 }
 
 #[derive(Eq, PartialEq)]
@@ -298,6 +300,22 @@ impl UiState {
                         };
                     }
 
+                    let is_active = self.active_right_panel == Some(RightPanelKind::CameraConfig);
+                    if ui
+                        .add(
+                            egui::Button::new("Camera")
+                                .selected(is_active)
+                                .min_size(egui::vec2(0.0, 45.0)),
+                        )
+                        .clicked()
+                    {
+                        self.active_right_panel = if is_active {
+                            None
+                        } else {
+                            Some(RightPanelKind::CameraConfig)
+                        };
+                    }
+
                     let mut brush_config = world.resource_mut::<BrushConfig>();
                     brush_config.active =
                         self.active_right_panel == Some(RightPanelKind::TerrainPainter);
@@ -385,6 +403,11 @@ impl UiState {
                     RightPanelKind::MapData => {
                         ui.push_id("map_data_editor", |ui| {
                             map_data_ui::render(ui, world);
+                        });
+                    }
+                    RightPanelKind::CameraConfig => {
+                        ui.push_id("camera_config_editor", |ui| {
+                            camera_config_ui::render_camera_config_editor(ui, world);
                         });
                     }
                     RightPanelKind::Inspector => {

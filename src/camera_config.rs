@@ -4,7 +4,10 @@ use bevy::{
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
     prelude::*,
 };
+use bevy_persistent::Persistent;
+use serde::{Deserialize, Serialize};
 
+use crate::editor_config::{AutosaveAppExt, EditorStateAppExt};
 use crate::world_direction::WorldDirection;
 use crate::{
     ui_editor::UIKeyboardCapture,
@@ -13,7 +16,7 @@ use crate::{
 
 const DEFAULT_ORBIT_PITCH: f32 = 0.0;
 
-#[derive(Debug, Resource)]
+#[derive(Debug, Resource, Clone, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct CameraSettings {
     pub zoom: f32,
     pub target_zoom: f32,
@@ -31,18 +34,14 @@ pub struct CameraSettings {
     pub orbit_pitch: f32,
     pub orbit_rotate_sensitivity: f32,
     pub vertical_rotate_sensitivity: f32,
+    pub rts_enabled: bool,
+    pub start_position: Vec3,
+    pub start_look_at: Vec3,
 }
 
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum CameraSystems {
-    UpdateState,
-}
-
-pub struct CameraPlugin;
-
-impl Plugin for CameraPlugin {
-    fn build(&self, app: &mut App) {
-        let camera_settings = CameraSettings {
+impl Default for CameraSettings {
+    fn default() -> Self {
+        Self {
             zoom: 1.0,
             target_zoom: 0.0,
             zoom_speed: 0.05,
@@ -59,18 +58,41 @@ impl Plugin for CameraPlugin {
             orbit_pitch: DEFAULT_ORBIT_PITCH,
             orbit_rotate_sensitivity: 0.01,
             vertical_rotate_sensitivity: 0.02,
-        };
-        let world_direction = WorldDirection::from_orbit_yaw(camera_settings.orbit_yaw);
+            rts_enabled: true,
+            start_position: Vec3::new(0.0, 2.0, 0.0),
+            start_look_at: Vec3::ZERO,
+        }
+    }
+}
+
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CameraSystems {
+    UpdateState,
+}
+
+pub struct CameraPlugin;
+
+impl Plugin for CameraPlugin {
+    fn build(&self, app: &mut App) {
+        let persistence = crate::persistence::PersistenceConfig::new("camera_config");
+        let camera_settings = persistence.get_resource::<CameraSettings>(
+            "camera settings",
+            "camera_settings.toml",
+        );
+        let world_direction =
+            WorldDirection::from_orbit_yaw(camera_settings.orbit_yaw);
 
         app.insert_resource(camera_settings)
             .insert_resource(world_direction)
+            .register_type::<CameraSettings>()
+            .add_editor_state::<CameraSettings>()
+            .add_autosave::<CameraSettings>()
             .add_systems(
                 Update,
                 (
                     (rotate_horizontal, rotate_vertical).chain(),
                     move_focus,
                     clamp_camera_to_grid,
-                    // grid_fixed_snap,
                     zoom,
                     sync_world_direction,
                 )
@@ -81,7 +103,7 @@ impl Plugin for CameraPlugin {
 }
 
 fn clamp_camera_to_grid(
-    mut camera_settings: ResMut<CameraSettings>,
+    mut camera_settings: ResMut<Persistent<CameraSettings>>,
 ) {
     let max_world = (GRID_SIZE - 1) as f32 * TILE_SIZE;
     camera_settings.focus_xz = camera_settings
@@ -93,7 +115,7 @@ fn move_focus(
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     keyboard_capture: Option<Res<UIKeyboardCapture>>,
-    mut camera_settings: ResMut<CameraSettings>,
+    mut camera_settings: ResMut<Persistent<CameraSettings>>,
 ) {
     if keyboard_capture
         .as_ref()
@@ -151,7 +173,7 @@ fn move_focus(
 fn zoom(
     time: Res<Time>,
     camera: Single<&mut Transform, With<Camera>>,
-    mut camera_settings: ResMut<CameraSettings>,
+    mut camera_settings: ResMut<Persistent<CameraSettings>>,
     mouse_wheel_input: Res<AccumulatedMouseScroll>,
     keyboard_capture: Option<Res<UIKeyboardCapture>>,
 ) {
@@ -172,22 +194,28 @@ fn zoom(
     if (camera_settings.target_zoom - camera_settings.zoom).abs() < 0.001 {
         camera_settings.zoom = camera_settings.target_zoom;
     }
-    if camera_settings.target_zoom == 0.0 {
-        let pitch_reset_alpha = 1.0 - (-8.0 * time.delta_secs()).exp();
-        camera_settings.orbit_pitch +=
-            (DEFAULT_ORBIT_PITCH - camera_settings.orbit_pitch) * pitch_reset_alpha;
-
-        if (camera_settings.orbit_pitch - DEFAULT_ORBIT_PITCH).abs() < 0.001 {
-            camera_settings.orbit_pitch = DEFAULT_ORBIT_PITCH;
-        }
-    }
 
     let t = camera_settings.zoom;
-    let base_pitch = camera_settings.max_elevation
-        + (camera_settings.min_elevation - camera_settings.max_elevation) * t;
 
-    let pitch =
-        (base_pitch + camera_settings.orbit_pitch).clamp(-0.2, camera_settings.max_elevation);
+    let pitch = if camera_settings.rts_enabled {
+        if camera_settings.target_zoom == 0.0 {
+            let pitch_reset_alpha = 1.0 - (-8.0 * time.delta_secs()).exp();
+            camera_settings.orbit_pitch +=
+                (DEFAULT_ORBIT_PITCH - camera_settings.orbit_pitch) * pitch_reset_alpha;
+
+            if (camera_settings.orbit_pitch - DEFAULT_ORBIT_PITCH).abs() < 0.001 {
+                camera_settings.orbit_pitch = DEFAULT_ORBIT_PITCH;
+            }
+        }
+
+        let base_pitch = camera_settings.max_elevation
+            + (camera_settings.min_elevation - camera_settings.max_elevation) * t;
+
+        (base_pitch + camera_settings.orbit_pitch).clamp(-0.2, camera_settings.max_elevation)
+    } else {
+        (camera_settings.max_elevation - camera_settings.orbit_pitch)
+            .clamp(0.1, camera_settings.max_elevation)
+    };
 
     let distance = camera_settings.max_distance
         + (camera_settings.min_distance - camera_settings.max_distance) * t;
@@ -222,7 +250,7 @@ fn rotate_horizontal(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     keyboard_capture: Option<Res<UIKeyboardCapture>>,
-    mut camera_settings: ResMut<CameraSettings>,
+    mut camera_settings: ResMut<Persistent<CameraSettings>>,
 ) {
     if mouse_buttons.pressed(MouseButton::Middle)
         && !keyboard_capture
@@ -240,7 +268,7 @@ fn rotate_vertical(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     keyboard_capture: Option<Res<UIKeyboardCapture>>,
-    mut camera_settings: ResMut<CameraSettings>,
+    mut camera_settings: ResMut<Persistent<CameraSettings>>,
 ) {
     if mouse_buttons.pressed(MouseButton::Middle)
         && !keyboard_capture
@@ -248,7 +276,10 @@ fn rotate_vertical(
             .is_some_and(|c| c.wants_pointer_input)
     {
         let delta_y = mouse_motion.delta.y;
-        if delta_y != 0.0 && camera_settings.target_zoom >= 1.0 {
+        if delta_y != 0.0
+            && (camera_settings.rts_enabled && camera_settings.target_zoom >= 1.0
+                || !camera_settings.rts_enabled)
+        {
             camera_settings.orbit_pitch = (camera_settings.orbit_pitch
                 + delta_y * camera_settings.vertical_rotate_sensitivity)
                 .clamp(-0.1, 1.0);
@@ -257,7 +288,7 @@ fn rotate_vertical(
 }
 
 fn sync_world_direction(
-    camera_settings: Res<CameraSettings>,
+    camera_settings: Res<Persistent<CameraSettings>>,
     mut world_direction: ResMut<WorldDirection>,
 ) {
     world_direction.set_heading_from_orbit_yaw(camera_settings.orbit_yaw);

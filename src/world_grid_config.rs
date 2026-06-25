@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use bevy::math::VectorSpace;
 use bevy::prelude::*;
 use bevy_persistent::Persistent;
 
@@ -9,8 +8,8 @@ use crate::terrain::{MapGenerator, TerrainSampler};
 use crate::terrain_painter::{sample_total_height, SculptMap};
 
 pub const TILE_SIZE: f32 = 4.0;
-pub const GRID_SIZE: usize = 1024;
-pub const WORLD_SIZE: f32 = GRID_SIZE as f32 * TILE_SIZE;
+pub const GRID_SIZE: usize = 256; // 512, 1024, 2048 depending on the size of the world you want to generate
+// pub const WORLD_SIZE: f32 = GRID_SIZE as f32 * TILE_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TilePos {
@@ -129,7 +128,7 @@ fn ensure_tile_with_sculpt<'a>(
 fn update_grid(
     mut gizmos: Gizmos,
     mut world_grid: ResMut<WorldGrid>,
-    camera_settings: Res<CameraSettings>,
+    camera_settings: Res<Persistent<CameraSettings>>,
     terrain_sampler: Res<TerrainSampler>,
     map_generator: Res<Persistent<MapGenerator>>,
     sculpt_map: Option<Res<SculptMap>>,
