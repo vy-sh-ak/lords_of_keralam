@@ -25,6 +25,7 @@ mod ui_editor;
 mod world_direction;
 mod editor_config;
 mod world_grid_config;
+mod building_placement;
 
 fn main() {
     App::new()
@@ -56,6 +57,7 @@ fn main() {
         .add_plugins(terrain_painter::TerrainPainterPlugin)
         .insert_resource(map_asset::ActiveMap::default())
         .add_plugins(world_grid_config::GridGeneratorPlugin)
+        .add_plugins(building_placement::BuildingPlacementPlugin)
         .add_plugins(
             ui_editor::UIEditor::default()
                 .with_toggle_key(KeyCode::F1)

@@ -16,6 +16,7 @@ use crate::terrain::{FallOffGenerator, MapGenerator};
 use crate::terrain_painter::BrushConfig;
 use crate::world_grid_config::WorldGrid;
 
+pub mod building_placement_ui;
 pub mod camera_config_ui;
 pub mod curve_editor;
 pub mod map_data_ui;
@@ -85,6 +86,7 @@ enum RightPanelKind {
     MapData,
     Inspector,
     CameraConfig,
+    BuildingPlacement,
 }
 
 #[derive(Eq, PartialEq)]
@@ -316,9 +318,27 @@ impl UiState {
                         };
                     }
 
+                    let is_active =
+                        self.active_right_panel == Some(RightPanelKind::BuildingPlacement);
+                    if ui
+                        .add(
+                            egui::Button::new("Buildings")
+                                .selected(is_active)
+                                .min_size(egui::vec2(0.0, 45.0)),
+                        )
+                        .clicked()
+                    {
+                        self.active_right_panel = if is_active {
+                            None
+                        } else {
+                            Some(RightPanelKind::BuildingPlacement)
+                        };
+                    }
+
                     let mut brush_config = world.resource_mut::<BrushConfig>();
                     brush_config.active =
                         self.active_right_panel == Some(RightPanelKind::TerrainPainter);
+
                 });
             });
 
@@ -418,6 +438,11 @@ impl UiState {
                                 &self.selected_entities,
                                 &self.selection,
                             );
+                        });
+                    }
+                    RightPanelKind::BuildingPlacement => {
+                        ui.push_id("building_placement_panel", |ui| {
+                            building_placement_ui::render_build_mode_panel(world, ui);
                         });
                     }
                 });
