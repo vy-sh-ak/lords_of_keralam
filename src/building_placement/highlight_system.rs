@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_persistent::Persistent;
 
 use crate::terrain::{MapGenerator, TerrainSampler};
-use crate::terrain_painter::{sample_total_height, SculptMap};
+use crate::terrain_painter::{ray_intersect_terrain, sample_total_height, SculptMap};
 use crate::ui_editor::UIKeyboardCapture;
 use crate::world_grid_config::{TilePos, TILE_SIZE};
 
@@ -35,12 +35,11 @@ pub fn highlight_hovered_tile(
     let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos) else {
         return;
     };
-    let Some(distance) = ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Dir3::Y)) else {
+    let Some(hit_pos) = ray_intersect_terrain(&ray, &terrain_sampler, &map_generator, Some(&sculpt_map)) else {
         return;
     };
-    let plane_pos = ray.get_point(distance);
 
-    let tile_pos = TilePos::world_to_grid(plane_pos);
+    let tile_pos = TilePos::world_to_grid(hit_pos);
     let min = tile_pos.grid_to_world();
 
     let lift = 0.1;

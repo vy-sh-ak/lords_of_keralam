@@ -2,6 +2,7 @@ pub mod brush;
 
 use std::collections::HashMap;
 
+use bevy::math::Ray3d;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -333,6 +334,49 @@ fn undo_redo_system(
     }
 }
 
+fn sample_terrain(
+    pos: Vec3,
+    terrain_sampler: &TerrainSampler,
+    map_generator: &MapGenerator,
+    sculpt_map: Option<&SculptMap>,
+) -> f32 {
+    let sample_pos = Vec3::new(pos.x, 0.0, pos.z);
+    match sculpt_map {
+        Some(sculpt) => sample_total_height(terrain_sampler, map_generator, sculpt, sample_pos),
+        None => terrain_sampler.sample_height(map_generator, sample_pos.x, sample_pos.z),
+    }
+}
+
+pub(crate) fn ray_intersect_terrain(
+    ray: &Ray3d,
+    terrain_sampler: &TerrainSampler,
+    map_generator: &MapGenerator,
+    sculpt_map: Option<&SculptMap>,
+) -> Option<Vec3> {
+    let max_dist = ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Dir3::Y))?;
+    let mut near = 0.0;
+    let mut far = max_dist;
+
+    for _ in 0..20 {
+        let t = (near + far) / 2.0;
+        let point = ray.get_point(t);
+        let terrain_height = sample_terrain(point, terrain_sampler, map_generator, sculpt_map);
+        let diff = point.y - terrain_height;
+        if diff.abs() < 0.01 {
+            return Some(Vec3::new(point.x, terrain_height, point.z));
+        }
+        if diff > 0.0 {
+            near = t;
+        } else {
+            far = t;
+        }
+    }
+
+    let point = ray.get_point((near + far) / 2.0);
+    let terrain_height = sample_terrain(point, terrain_sampler, map_generator, sculpt_map);
+    Some(Vec3::new(point.x, terrain_height, point.z))
+}
+
 fn get_terrain_hit_position(
     camera: &Camera,
     camera_transform: &GlobalTransform,
@@ -342,10 +386,7 @@ fn get_terrain_hit_position(
 ) -> Option<Vec3> {
     let cursor_pos = window.cursor_position()?;
     let ray = camera.viewport_to_world(camera_transform, cursor_pos).ok()?;
-    let distance = ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Dir3::Y))?;
-    let plane_pos = ray.get_point(distance);
-    let height = terrain_sampler.sample_height(map_generator, plane_pos.x, plane_pos.z);
-    Some(Vec3::new(plane_pos.x, height, plane_pos.z))
+    ray_intersect_terrain(&ray, terrain_sampler, map_generator, None)
 }
 
 fn get_terrain_hit_position_with_sculpt(
@@ -358,15 +399,7 @@ fn get_terrain_hit_position_with_sculpt(
 ) -> Option<Vec3> {
     let cursor_pos = window.cursor_position()?;
     let ray = camera.viewport_to_world(camera_transform, cursor_pos).ok()?;
-    let distance = ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Dir3::Y))?;
-    let plane_pos = ray.get_point(distance);
-    let height = sample_total_height(
-        terrain_sampler,
-        map_generator,
-        sculpt_map,
-        Vec3::new(plane_pos.x, 0.0, plane_pos.z),
-    );
-    Some(Vec3::new(plane_pos.x, height, plane_pos.z))
+    ray_intersect_terrain(&ray, terrain_sampler, map_generator, Some(sculpt_map))
 }
 
 fn vertex_total_height(

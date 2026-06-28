@@ -282,7 +282,11 @@ fn rotate_vertical(
         {
             camera_settings.orbit_pitch = (camera_settings.orbit_pitch
                 + delta_y * camera_settings.vertical_rotate_sensitivity)
-                .clamp(-0.1, 1.0);
+                .clamp(-0.5, PI / 2.0);
+            info!(
+                "orbit_pitch: {}",
+                camera_settings.orbit_pitch.to_degrees()
+            );
         }
     }
 }

@@ -5,7 +5,7 @@ use bevy_persistent::Persistent;
 
 use crate::camera_config::CameraSettings;
 use crate::terrain::{MapGenerator, TerrainSampler};
-use crate::terrain_painter::{sample_total_height, SculptMap};
+use crate::terrain_painter::{ray_intersect_terrain, sample_total_height, SculptMap};
 
 pub const TILE_SIZE: f32 = 4.0;
 pub const GRID_SIZE: usize = 256; // 512, 1024, 2048 depending on the size of the world you want to generate
@@ -282,6 +282,8 @@ fn tile_clicked(
     camera_query: Single<(&Camera, &GlobalTransform)>,
     window: Single<&Window>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    terrain_sampler: Res<TerrainSampler>,
+    map_generator: Res<Persistent<MapGenerator>>,
 ) {
     if !mouse_buttons.just_pressed(MouseButton::Left) {
         return;
@@ -291,9 +293,7 @@ fn tile_clicked(
 
     if let Some(cursor_pos) = window.cursor_position()
         && let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos)
-        && let Some(pos) = ray
-            .intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Dir3::Y))
-            .map(|distance| ray.get_point(distance))
+        && let Some(pos) = ray_intersect_terrain(&ray, &terrain_sampler, &map_generator, None)
     {
         let tile_pos = TilePos::world_to_grid(pos);
         if world_grid.tiles.contains_key(&tile_pos) {
