@@ -2,10 +2,9 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use bevy_persistent::Persistent;
 
-use crate::map_asset::{ActiveMap, MapAsset, MapAssetService};
-use crate::terrain::endless_terrain::EndlessTerrainState;
+use crate::map_asset::{ActiveMap, DefaultMapConfig, MapAsset, MapAssetService};
 use crate::terrain::MapGenerator;
-use crate::terrain_painter::{SculptMap, SyncGridRequest, UndoStack};
+use crate::terrain_painter::SculptMap;
 
 #[derive(Resource, Default)]
 struct MapDataUiState {
@@ -114,29 +113,56 @@ pub fn render(ui: &mut egui::Ui, world: &mut World) {
         if maps.is_empty() {
             ui.label("(no maps saved)");
         } else {
+            let default_map_name = {
+                let config = world.resource::<Persistent<DefaultMapConfig>>();
+                config.default_map.clone()
+            };
+
             for map_name in &maps {
                 let selected = {
                     let st = world.resource::<MapDataUiState>();
                     st.selected_map.as_deref() == Some(map_name.as_str())
                 };
-                let resp = ui.selectable_label(selected, map_name);
+                let is_default = default_map_name.as_deref() == Some(map_name.as_str());
+                let display_name = if is_default {
+                    format!("{map_name} (default)")
+                } else {
+                    map_name.clone()
+                };
+                let resp = ui.selectable_label(selected, display_name);
                 if resp.clicked() {
                     let mut st = world.resource_mut::<MapDataUiState>();
                     st.selected_map = Some(map_name.clone());
                 }
             }
 
-            let load_clicked;
-            let delete_clicked;
+            let mut load_clicked = false;
+            let mut delete_clicked = false;
+            let mut set_default_clicked = false;
             {
                 let st = world.resource::<MapDataUiState>();
                 let has_selection = st.selected_map.is_some();
-                load_clicked = ui
-                    .add_enabled(has_selection, egui::Button::new("Load"))
-                    .clicked();
-                delete_clicked = ui
-                    .add_enabled(has_selection, egui::Button::new("Delete"))
-                    .clicked();
+                let is_default_selected =
+                    default_map_name.as_deref() == st.selected_map.as_deref();
+
+                ui.horizontal(|ui| {
+                    load_clicked = ui
+                        .add_enabled(has_selection, egui::Button::new("Load"))
+                        .clicked();
+
+                    let set_default_text =
+                        if is_default_selected { "Unset Default" } else { "Set Default" };
+                    set_default_clicked = ui
+                        .add_enabled(has_selection, egui::Button::new(set_default_text))
+                        .clicked();
+
+                    delete_clicked = ui
+                        .add_enabled(
+                            has_selection && !is_default_selected,
+                            egui::Button::new("Delete"),
+                        )
+                        .clicked();
+                });
             }
 
             if load_clicked {
@@ -147,34 +173,41 @@ pub fn render(ui: &mut egui::Ui, world: &mut World) {
                 if let Some(ref name) = name {
                     match MapAssetService::load(name) {
                         Ok(asset) => {
-                            let mut persistent =
-                                world.resource_mut::<Persistent<MapGenerator>>();
-                            *persistent.get_mut() = asset.map_generator;
-                            persistent.set_changed();
-
-                            let mut sculpt = world.resource_mut::<SculptMap>();
-                            sculpt.chunks = asset.sculpt_map.chunks;
-                            let chunk_keys: Vec<_> = sculpt.chunks.keys().copied().collect();
-                            drop(sculpt);
-
-                            let mut endless = world.resource_mut::<EndlessTerrainState>();
-                            for coord in chunk_keys {
-                                endless.mark_chunk_dirty(coord);
-                            }
-
-                            world.resource_mut::<UndoStack>().undo_entries.clear();
-                            world.resource_mut::<UndoStack>().redo_entries.clear();
-                            world.resource_mut::<SyncGridRequest>().0 = true;
-                            world.resource_mut::<ActiveMap>().current_map = Some(name.clone());
-
-                            message =
-                                Some((format!("Map '{name}' loaded"), egui::Color32::GREEN));
+                            crate::map_asset::apply_map_asset_to_world(world, asset, name);
+                            message = Some((
+                                format!("Map '{name}' loaded"),
+                                egui::Color32::GREEN,
+                            ));
                         }
                         Err(e) => {
                             eprintln!("[map_data] Load error: {e}");
                             message = Some((e, egui::Color32::RED));
                         }
                     }
+                }
+            }
+
+            if set_default_clicked {
+                let name = {
+                    let st = world.resource::<MapDataUiState>();
+                    st.selected_map.clone()
+                };
+                if let Some(ref name) = name {
+                    let mut config = world.resource_mut::<Persistent<DefaultMapConfig>>();
+                    if config.default_map.as_deref() == Some(name.as_str()) {
+                        config.default_map = None;
+                        message = Some((
+                            format!("Default map '{name}' unset"),
+                            egui::Color32::GREEN,
+                        ));
+                    } else {
+                        config.default_map = Some(name.clone());
+                        message = Some((
+                            format!("Default map set to '{name}'"),
+                            egui::Color32::GREEN,
+                        ));
+                    }
+                    config.set_changed();
                 }
             }
 
@@ -191,6 +224,14 @@ pub fn render(ui: &mut egui::Ui, world: &mut World) {
                                 active.current_map = None;
                             }
                             drop(active);
+
+                            let mut config =
+                                world.resource_mut::<Persistent<DefaultMapConfig>>();
+                            if config.default_map.as_deref() == Some(name.as_str()) {
+                                config.default_map = None;
+                                config.set_changed();
+                            }
+                            drop(config);
 
                             let mut st = world.resource_mut::<MapDataUiState>();
                             st.selected_map = None;

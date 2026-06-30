@@ -1,5 +1,5 @@
 use bevy::{
-    asset::AssetPlugin,
+    // asset::AssetPlugin,
     diagnostic::FrameTimeDiagnosticsPlugin,
     light::CascadeShadowConfigBuilder,
     pbr::wireframe::{WireframeConfig, WireframePlugin},
@@ -55,7 +55,7 @@ fn main() {
         .add_plugins(terrain::MapGenerator::default().plugin())
         .add_plugins(terrain::EndlessTerrainPlugin)
         .add_plugins(terrain_painter::TerrainPainterPlugin)
-        .insert_resource(map_asset::ActiveMap::default())
+        .add_plugins(map_asset::MapAssetPlugin)
         .add_plugins(world_grid_config::GridGeneratorPlugin)
         .add_plugins(building_placement::BuildingPlacementPlugin)
         .add_plugins(
