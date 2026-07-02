@@ -75,8 +75,8 @@ fn main() {
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    // mut meshes: ResMut<Assets<Mesh>>,
+    // mut materials: ResMut<Assets<StandardMaterial>>,
     camera_settings: Res<Persistent<CameraSettings>>,
 ) {
     commands.spawn((
@@ -91,12 +91,12 @@ fn setup(
             .looking_at(camera_settings.start_look_at, Vec3::Y),
     ));
     // debugging cube
-    commands.spawn((
-        Name::new("Cube"),
-        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-        MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
-        Transform::from_xyz(0.0, 20.0, 0.0),
-    ));
+    // commands.spawn((
+    //     Name::new("Cube"),
+    //     Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+    //     MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
+    //     Transform::from_xyz(0.0, 20.0, 0.0),
+    // ));
 
     // Sun
     let cascade_shadow_config = CascadeShadowConfigBuilder {

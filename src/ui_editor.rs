@@ -14,6 +14,7 @@ use bevy_persistent::Persistent;
 use crate::editor_config::EditorState;
 use crate::terrain::{FallOffGenerator, MapGenerator};
 use crate::terrain_painter::BrushConfig;
+use crate::building_placement::BuildMode;
 use crate::world_grid_config::WorldGrid;
 
 pub mod building_placement_ui;
@@ -71,6 +72,7 @@ pub struct UIKeyboardCapture {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MainSection {
     Map,
+    Buildings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,130 +218,173 @@ impl UiState {
                 ui.horizontal(|ui| {
                     let is_map = self.selected_section == MainSection::Map;
                     if ui.add(egui::Button::new("Map").selected(is_map)).clicked() {
+                        if self.selected_section == MainSection::Buildings {
+                            if self.active_right_panel == Some(RightPanelKind::BuildingPlacement) {
+                                self.active_right_panel = None;
+                                world.resource_mut::<BuildMode>().placing_building = None;
+                            }
+                        }
                         self.selected_section = MainSection::Map;
+                    }
+                    let is_buildings = self.selected_section == MainSection::Buildings;
+                    if ui
+                        .add(egui::Button::new("Buildings").selected(is_buildings))
+                        .clicked()
+                    {
+                        if self.selected_section == MainSection::Map {
+                            if self.active_right_panel == Some(RightPanelKind::BuildingPlacement) {
+                                self.active_right_panel = None;
+                                world.resource_mut::<BuildMode>().placing_building = None;
+                            }
+                        }
+                        self.selected_section = MainSection::Buildings;
                     }
                 });
 
                 ui.separator();
 
-                ui.horizontal(|ui| {
-                    // Quick actions
-                    ui.vertical(|ui| {
-                        ui.set_width(60.0);
-                        let mut editor = world.resource_mut::<EditorState<MapGenerator>>();
-                        let mut uv = editor.edited.show_uv_wireframe;
-                        if ui.checkbox(&mut uv, "UV").changed()
-                            && uv != editor.edited.show_uv_wireframe
-                        {
-                            editor.edited.show_uv_wireframe = uv;
-                            let edited = editor.edited.clone();
-                            drop(editor);
-                            let mut persistent = world.resource_mut::<Persistent<MapGenerator>>();
-                            *persistent.get_mut() = edited;
-                            if persistent.terrain_data.use_falloff_map
-                                && persistent.falloff_map.is_empty()
+                match self.selected_section {
+                    MainSection::Map => {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(60.0);
+                                let mut editor =
+                                    world.resource_mut::<EditorState<MapGenerator>>();
+                                let mut uv = editor.edited.show_uv_wireframe;
+                                if ui.checkbox(&mut uv, "UV").changed()
+                                    && uv != editor.edited.show_uv_wireframe
+                                {
+                                    editor.edited.show_uv_wireframe = uv;
+                                    let edited = editor.edited.clone();
+                                    drop(editor);
+                                    let mut persistent =
+                                        world.resource_mut::<Persistent<MapGenerator>>();
+                                    *persistent.get_mut() = edited;
+                                    if persistent.terrain_data.use_falloff_map
+                                        && persistent.falloff_map.is_empty()
+                                    {
+                                        let map_size = persistent.map_chunk_size as usize + 2;
+                                        persistent.falloff_map = FallOffGenerator::generate_fall_off_map(map_size);
+                                    }
+                                    persistent.set_changed();
+                                } else {
+                                    drop(editor);
+                                }
+
+                                let mut grid = world.resource_mut::<WorldGrid>();
+                                ui.checkbox(&mut grid.show_grid, "Grid");
+                            });
+
+                            ui.separator();
+
+                            let is_active =
+                                self.active_right_panel == Some(RightPanelKind::MapGenerator);
+                            if ui
+                                .add(
+                                    egui::Button::new("Map Gen")
+                                        .selected(is_active)
+                                        .min_size(egui::vec2(0.0, 45.0)),
+                                )
+                                .clicked()
                             {
-                                let map_size = persistent.map_chunk_size as usize + 2;
-                                persistent.falloff_map =
-                                    FallOffGenerator::generate_fall_off_map(map_size);
+                                self.active_right_panel = if is_active {
+                                    None
+                                } else {
+                                    Some(RightPanelKind::MapGenerator)
+                                };
                             }
-                            persistent.set_changed();
-                        } else {
-                            drop(editor);
-                        }
+                            let is_active =
+                                self.active_right_panel == Some(RightPanelKind::TerrainPainter);
+                            if ui
+                                .add(
+                                    egui::Button::new("Terrain Paint")
+                                        .selected(is_active)
+                                        .min_size(egui::vec2(0.0, 45.0)),
+                                )
+                                .clicked()
+                            {
+                                self.active_right_panel = if is_active {
+                                    None
+                                } else {
+                                    Some(RightPanelKind::TerrainPainter)
+                                };
+                            }
 
-                        let mut grid = world.resource_mut::<WorldGrid>();
-                        ui.checkbox(&mut grid.show_grid, "Grid");
-                    });
+                            let is_active =
+                                self.active_right_panel == Some(RightPanelKind::MapData);
+                            if ui
+                                .add(
+                                    egui::Button::new("Map Data")
+                                        .selected(is_active)
+                                        .min_size(egui::vec2(0.0, 45.0)),
+                                )
+                                .clicked()
+                            {
+                                self.active_right_panel = if is_active {
+                                    None
+                                } else {
+                                    Some(RightPanelKind::MapData)
+                                };
+                            }
 
-                    ui.separator();
+                            let is_active =
+                                self.active_right_panel == Some(RightPanelKind::CameraConfig);
+                            if ui
+                                .add(
+                                    egui::Button::new("Camera")
+                                        .selected(is_active)
+                                        .min_size(egui::vec2(0.0, 45.0)),
+                                )
+                                .clicked()
+                            {
+                                self.active_right_panel = if is_active {
+                                    None
+                                } else {
+                                    Some(RightPanelKind::CameraConfig)
+                                };
+                            }
 
-                    // Editor buttons (64px tall)
-                    let is_active = self.active_right_panel == Some(RightPanelKind::MapGenerator);
-                    if ui
-                        .add(
-                            egui::Button::new("Map Gen")
-                                .selected(is_active)
-                                .min_size(egui::vec2(0.0, 45.0)),
-                        )
-                        .clicked()
-                    {
-                        self.active_right_panel = if is_active {
-                            None
-                        } else {
-                            Some(RightPanelKind::MapGenerator)
-                        };
+                            let mut brush_config = world.resource_mut::<BrushConfig>();
+                            brush_config.active =
+                                self.active_right_panel == Some(RightPanelKind::TerrainPainter);
+                        });
                     }
-                    let is_active = self.active_right_panel == Some(RightPanelKind::TerrainPainter);
-                    if ui
-                        .add(
-                            egui::Button::new("Terrain Paint")
-                                .selected(is_active)
-                                .min_size(egui::vec2(0.0, 45.0)),
-                        )
-                        .clicked()
-                    {
-                        self.active_right_panel = if is_active {
-                            None
-                        } else {
-                            Some(RightPanelKind::TerrainPainter)
-                        };
+                    MainSection::Buildings => {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(80.0);
+                                let mut build_mode = world.resource_mut::<BuildMode>();
+                                ui.checkbox(&mut build_mode.enabled, "gizmo highlight");
+                            });
+
+                            ui.separator();
+
+                            let is_hut = world
+                                .resource::<BuildMode>()
+                                .placing_building
+                                .is_some();
+                            if ui
+                                .add(
+                                    egui::Button::new("Hut")
+                                        .selected(is_hut)
+                                        .min_size(egui::vec2(80.0, 45.0)),
+                                )
+                                .clicked()
+                            {
+                                let mut build_mode = world.resource_mut::<BuildMode>();
+                                if is_hut {
+                                    build_mode.placing_building = None;
+                                    self.active_right_panel = None;
+                                } else {
+                                    build_mode.placing_building =
+                                        Some(crate::building_placement::BuildingType::Hut);
+                                    self.active_right_panel =
+                                        Some(RightPanelKind::BuildingPlacement);
+                                }
+                            }
+                        });
                     }
-
-                    let is_active = self.active_right_panel == Some(RightPanelKind::MapData);
-                    if ui
-                        .add(
-                            egui::Button::new("Map Data")
-                                .selected(is_active)
-                                .min_size(egui::vec2(0.0, 45.0)),
-                        )
-                        .clicked()
-                    {
-                        self.active_right_panel = if is_active {
-                            None
-                        } else {
-                            Some(RightPanelKind::MapData)
-                        };
-                    }
-
-                    let is_active = self.active_right_panel == Some(RightPanelKind::CameraConfig);
-                    if ui
-                        .add(
-                            egui::Button::new("Camera")
-                                .selected(is_active)
-                                .min_size(egui::vec2(0.0, 45.0)),
-                        )
-                        .clicked()
-                    {
-                        self.active_right_panel = if is_active {
-                            None
-                        } else {
-                            Some(RightPanelKind::CameraConfig)
-                        };
-                    }
-
-                    let is_active =
-                        self.active_right_panel == Some(RightPanelKind::BuildingPlacement);
-                    if ui
-                        .add(
-                            egui::Button::new("Buildings")
-                                .selected(is_active)
-                                .min_size(egui::vec2(0.0, 45.0)),
-                        )
-                        .clicked()
-                    {
-                        self.active_right_panel = if is_active {
-                            None
-                        } else {
-                            Some(RightPanelKind::BuildingPlacement)
-                        };
-                    }
-
-                    let mut brush_config = world.resource_mut::<BrushConfig>();
-                    brush_config.active =
-                        self.active_right_panel == Some(RightPanelKind::TerrainPainter);
-
-                });
+                }
             });
 
         // ---- Left sidebar: H / R buttons ----
