@@ -77,7 +77,7 @@ impl Plugin for EndlessTerrainPlugin {
 fn update_focus_height(
     terrain_sampler: Res<TerrainSampler>,
     map_generator: Res<Persistent<MapGenerator>>,
-    mut camera_settings: ResMut<CameraSettings>,
+    mut camera_settings: ResMut<Persistent<CameraSettings>>,
     time: Res<Time>,
 ) {
    if camera_settings.zoom < 0.5 {
@@ -122,7 +122,7 @@ for distance in [5.0, 10.0, 15.0, 20.0] {
 
 pub(crate) fn sync_endless_terrain(
     mut commands: Commands,
-    camera_settings: Res<CameraSettings>,
+    camera_settings: Res<Persistent<CameraSettings>>,
     camera_transform: Single<&Transform, With<Camera>>,
     mut state: ResMut<EndlessTerrainState>,
     mut meshes: ResMut<Assets<Mesh>>,
