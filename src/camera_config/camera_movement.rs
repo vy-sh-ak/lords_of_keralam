@@ -102,19 +102,25 @@ pub fn zoom(
     let pitch = if camera_settings.rts_enabled {
         if camera_settings.target_zoom == 0.0 {
             let pitch_reset_alpha = 1.0 - (-8.0 * time.delta_secs()).exp();
-            camera_settings.orbit_pitch +=
-                (DEFAULT_ORBIT_PITCH - camera_settings.orbit_pitch) * pitch_reset_alpha;
+            camera_settings.target_orbit_pitch +=
+                (DEFAULT_ORBIT_PITCH - camera_settings.target_orbit_pitch) * pitch_reset_alpha;
 
-            if (camera_settings.orbit_pitch - DEFAULT_ORBIT_PITCH).abs() < 0.001 {
-                camera_settings.orbit_pitch = DEFAULT_ORBIT_PITCH;
+            if (camera_settings.target_orbit_pitch - DEFAULT_ORBIT_PITCH).abs() < 0.001 {
+                camera_settings.target_orbit_pitch = DEFAULT_ORBIT_PITCH;
             }
         }
+
+        let alpha = 1.0 - (-camera_settings.orbit_pitch_smoothness * time.delta_secs()).exp();
+        camera_settings.orbit_pitch += (camera_settings.target_orbit_pitch - camera_settings.orbit_pitch) * alpha;
 
         let base_pitch = camera_settings.max_elevation
             + (camera_settings.min_elevation - camera_settings.max_elevation) * t;
 
         (base_pitch + camera_settings.orbit_pitch).clamp(-0.2, camera_settings.max_elevation)
     } else {
+        let alpha = 1.0 - (-camera_settings.orbit_pitch_smoothness * time.delta_secs()).exp();
+        camera_settings.orbit_pitch += (camera_settings.target_orbit_pitch - camera_settings.orbit_pitch) * alpha;
+
         (camera_settings.max_elevation - camera_settings.orbit_pitch)
             .clamp(0.1, camera_settings.max_elevation)
     };
@@ -182,8 +188,8 @@ pub fn rotate_vertical(
             && (camera_settings.rts_enabled && camera_settings.target_zoom >= 1.0
                 || !camera_settings.rts_enabled)
         {
-            camera_settings.orbit_pitch = (camera_settings.orbit_pitch
-                + delta_y * camera_settings.vertical_rotate_sensitivity)
+            camera_settings.target_orbit_pitch = (camera_settings.target_orbit_pitch
+                - delta_y * camera_settings.vertical_rotate_sensitivity)
                 .clamp(-0.5, PI / 2.0);
         }
     }

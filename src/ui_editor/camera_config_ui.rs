@@ -151,6 +151,13 @@ pub fn render_camera_config_editor(ui: &mut egui::Ui, world: &mut World) {
 
                     changed |= ui
                         .add(
+                            egui::Slider::new(&mut editor.edited.orbit_pitch_smoothness, 1.0..=30.0)
+                                .text("Pitch Smoothness"),
+                        )
+                        .changed();
+
+                    changed |= ui
+                        .add(
                             egui::Slider::new(&mut editor.edited.min_elevation, 0.0..=1.0)
                                 .text("Min Elevation"),
                         )
