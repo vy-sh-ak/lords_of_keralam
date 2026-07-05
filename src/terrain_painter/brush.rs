@@ -3,36 +3,37 @@ use std::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 use crate::terrain::{MapGenerator, TerrainSampler, chunk_span};
-use crate::terrain_painter::{BrushConfig, TerrainTool};
+use super::sculpt_map::{get_affected_chunks};
 
-pub fn get_affected_chunks(
-    hit_pos: Vec3,
-    radius: f32,
-    map_generator: &MapGenerator,
-) -> HashSet<IVec2> {
-    let chunk_span_val = chunk_span(map_generator);
-    let hit_chunk = IVec2::new(
-        (hit_pos.x / chunk_span_val).round() as i32,
-        (hit_pos.z / chunk_span_val).round() as i32,
-    );
-    let chunk_radius_span = (radius / chunk_span_val).ceil() as i32 + 1;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerrainTool {
+    Raise,
+    Lower,
+    Flatten,
+    Smooth,
+}
 
-    let mut affected = HashSet::new();
-    for cy in (hit_chunk.y - chunk_radius_span)..=(hit_chunk.y + chunk_radius_span) {
-        for cx in (hit_chunk.x - chunk_radius_span)..=(hit_chunk.x + chunk_radius_span) {
-            let coord = IVec2::new(cx, cy);
-            let center_x = cx as f32 * chunk_span_val;
-            let center_z = cy as f32 * chunk_span_val;
-            let half_span = chunk_span_val / 2.0;
-            if (hit_pos.x - center_x).abs() > half_span + radius
-                || (hit_pos.z - center_z).abs() > half_span + radius
-            {
-                continue;
-            }
-            affected.insert(coord);
+#[derive(Resource)]
+pub struct BrushConfig {
+    pub active: bool,
+    pub tool: TerrainTool,
+    pub radius: f32,
+    pub strength: f32,
+    pub flatten_target: Option<f32>,
+    pub flatten_sampling: bool,
+}
+
+impl Default for BrushConfig {
+    fn default() -> Self {
+        Self {
+            active: false,
+            tool: TerrainTool::Raise,
+            radius: 5.0,
+            strength: 1.0,
+            flatten_target: None,
+            flatten_sampling: false,
         }
     }
-    affected
 }
 
 pub fn apply_brush(
