@@ -7,6 +7,7 @@ use crate::ui_editor::UIKeyboardCapture;
 use crate::world_grid_config::{TilePos, WorldGrid, TILE_SIZE};
 
 use super::build_mode::{BuildMode, BuildingSize};
+use crate::game_assets::BuildingAssets;
 
 #[derive(Component)]
 pub struct GhostBuilding;
@@ -99,6 +100,7 @@ pub fn ghost_placement_system(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     keyboard_capture: Option<Res<UIKeyboardCapture>>,
+    building_assets: Res<BuildingAssets>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -156,14 +158,16 @@ pub fn ghost_placement_system(
                 &sculpt_map,
                 Vec3::new(snapped.x, 0.0, snapped.z),
             );
-            commands.spawn((
-                Mesh3d(meshes.add(Cuboid::new(w, h, d))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(1.0, 0.85, 0.0),
-                    ..default()
-                })),
-                Transform::from_xyz(snapped.x, height + h / 2.0, snapped.z),
-            ));
+            if let Some(scene) = build_mode
+                .placing_building
+                .and_then(|bt| building_assets.scene(bt).cloned())
+            {
+                commands.spawn((
+                    Name::new("Building"),
+                    SceneRoot(scene),
+                    Transform::from_xyz(snapped.x, height, snapped.z),
+                ));
+            }
             mark_occupied(
                 &mut *world_grid,
                 &terrain_sampler,

@@ -26,6 +26,7 @@ mod world_direction;
 mod editor_config;
 mod world_grid_config;
 mod building_placement;
+mod game_assets;
 
 fn main() {
     App::new()
@@ -58,6 +59,7 @@ fn main() {
         .add_plugins(map_asset::MapAssetPlugin)
         .add_plugins(world_grid_config::GridGeneratorPlugin)
         .add_plugins(building_placement::BuildingPlacementPlugin)
+        .add_plugins(game_assets::GameAssetsPlugin)
         .add_plugins(
             ui_editor::UIEditor::default()
                 .with_toggle_key(KeyCode::F1)
