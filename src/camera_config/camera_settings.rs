@@ -33,16 +33,16 @@ pub const DEFAULT_ORBIT_PITCH: f32 = 0.0;
 impl Default for CameraSettings {
     fn default() -> Self {
         Self {
-            zoom: 1.0,
+            zoom: 3.0,
             target_zoom: 0.0,
             zoom_speed: 0.05,
             zoom_smoothness: 12.0,
-            min_distance: 6.0,
+            min_distance: 2.0,
             max_distance: 500.0,
             min_elevation: 0.0,
             max_elevation: PI / 2.0 - 0.05,
             focus_xz: Vec2::new(3.0, 3.0),
-            focus_height: 6.0,
+            focus_height: 0.0,
             move_speed_zoomed_in: 50.0,
             move_speed_zoomed_out: 200.0,
             orbit_yaw: PI / 4.0,

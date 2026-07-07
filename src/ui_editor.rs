@@ -15,7 +15,7 @@ use crate::editor_config::EditorState;
 use crate::terrain::{FallOffGenerator, MapGenerator};
 use crate::terrain_painter::BrushConfig;
 use crate::building_placement::BuildMode;
-use crate::world_grid_config::WorldGrid;
+use crate::world_grid_config::WorldGridConfig;
 
 pub mod building_placement_ui;
 pub mod camera_config_ui;
@@ -271,8 +271,21 @@ impl UiState {
                                     drop(editor);
                                 }
 
-                                let mut grid = world.resource_mut::<WorldGrid>();
-                                ui.checkbox(&mut grid.show_grid, "Grid");
+                                let mut grid_config = world.resource_mut::<EditorState<WorldGridConfig>>();
+                                let mut show = grid_config.edited.show_grid;
+                                if ui.checkbox(&mut show, "Grid").changed()
+                                    && show != grid_config.edited.show_grid
+                                {
+                                    grid_config.edited.show_grid = show;
+                                    let edited = grid_config.edited.clone();
+                                    drop(grid_config);
+                                    let mut persistent =
+                                        world.resource_mut::<Persistent<WorldGridConfig>>();
+                                    *persistent.get_mut() = edited;
+                                    persistent.set_changed();
+                                } else {
+                                    drop(grid_config);
+                                }
                             });
 
                             ui.separator();

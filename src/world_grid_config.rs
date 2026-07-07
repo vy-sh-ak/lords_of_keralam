@@ -2,8 +2,11 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy_persistent::Persistent;
+use serde::{Deserialize, Serialize};
 
 use crate::camera_config::CameraSettings;
+use crate::editor_config::{AutosaveAppExt, EditorStateAppExt};
+use crate::persistence;
 use crate::terrain::{MapGenerator, TerrainSampler};
 use crate::terrain_painter::{ray_intersect_terrain, sample_total_height, SculptMap};
 
@@ -52,6 +55,17 @@ impl Default for WorldGrid {
             tiles: HashMap::new(),
             show_grid: true,
         }
+    }
+}
+
+#[derive(Resource, Clone, PartialEq, Serialize, Deserialize, Reflect)]
+pub struct WorldGridConfig {
+    pub show_grid: bool,
+}
+
+impl Default for WorldGridConfig {
+    fn default() -> Self {
+        Self { show_grid: true }
     }
 }
 
@@ -105,8 +119,16 @@ impl WorldGrid {
 pub struct GridGeneratorPlugin;
 impl Plugin for GridGeneratorPlugin {
     fn build(&self, app: &mut App) {
+        let world_grid_persistence = persistence::PersistenceConfig::new("world_grid");
+        let world_grid_config = world_grid_persistence
+            .get_resource::<WorldGridConfig>("world grid config", "world_grid_config.toml");
+
         app.insert_resource(WorldGrid::default())
-            .add_systems(Update, (update_grid, tile_clicked));
+            .insert_resource(world_grid_config)
+            .register_type::<WorldGridConfig>()
+            .add_editor_state::<WorldGridConfig>()
+            .add_autosave::<WorldGridConfig>()
+            .add_systems(Update, (update_grid, tile_clicked, sync_world_grid_show_grid));
     }
 }
 
@@ -132,8 +154,9 @@ fn update_grid(
     terrain_sampler: Res<TerrainSampler>,
     map_generator: Res<Persistent<MapGenerator>>,
     sculpt_map: Option<Res<SculptMap>>,
+    world_grid_config: Res<Persistent<WorldGridConfig>>,
 ) {
-    if !world_grid.show_grid {
+    if !world_grid_config.show_grid {
         return;
     }
 
@@ -275,6 +298,13 @@ fn update_grid(
     gizmos.linestrip(left_points, Color::srgb(1.0, 0.0, 0.0));
     gizmos.linestrip(right_points, Color::srgb(1.0, 0.0, 0.0));
 
+}
+
+fn sync_world_grid_show_grid(
+    world_grid_config: Res<Persistent<WorldGridConfig>>,
+    mut world_grid: ResMut<WorldGrid>,
+) {
+    world_grid.show_grid = world_grid_config.show_grid;
 }
 
 fn tile_clicked(

@@ -102,7 +102,6 @@ pub fn ghost_placement_system(
     keyboard_capture: Option<Res<UIKeyboardCapture>>,
     building_assets: Res<BuildingAssets>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut ghost_query: Query<
         (
@@ -142,9 +141,8 @@ pub fn ghost_placement_system(
         &sculpt_map,
     );
 
-    let w = build_mode.building_size.tiles_x as f32 * TILE_SIZE;
-    let d = build_mode.building_size.tiles_z as f32 * TILE_SIZE;
-    let h = w.max(d);
+    let _w = build_mode.building_size.tiles_x as f32 * TILE_SIZE;
+    let _d = build_mode.building_size.tiles_z as f32 * TILE_SIZE;
 
     if !ui_active && mouse_buttons.just_pressed(MouseButton::Left) {
         if let Some(hit_pos) = hit {
@@ -201,7 +199,7 @@ pub fn ghost_placement_system(
                 &sculpt_map,
                 Vec3::new(snapped.x, 0.0, snapped.z),
             );
-            transform.translation = Vec3::new(snapped.x, height + h / 2.0, snapped.z);
+            transform.translation = Vec3::new(snapped.x, height, snapped.z);
             let overlapping =
                 check_overlap(&*world_grid, snapped, &build_mode.building_size);
             if overlapping {
@@ -223,16 +221,19 @@ pub fn ghost_placement_system(
     if let Some(entity) = ghost_entity {
         if let Some((old_x, old_z)) = old_size {
             if old_x != s.tiles_x || old_z != s.tiles_z {
-                commands.entity(entity).insert((
-                    GhostSize {
-                        tiles_x: s.tiles_x,
-                        tiles_z: s.tiles_z,
-                    },
-                    Mesh3d(meshes.add(Cuboid::new(w, h, d))),
-                ));
+                commands.entity(entity).insert(GhostSize {
+                    tiles_x: s.tiles_x,
+                    tiles_z: s.tiles_z,
+                });
             }
         }
     } else {
+        let Some(building_type) = build_mode.placing_building else {
+            return;
+        };
+        let Some(mesh_handle) = building_assets.mesh(building_type).cloned() else {
+            return;
+        };
         let gold_mat = materials.add(StandardMaterial {
             base_color: Color::srgba(1.0, 0.85, 0.0, 0.4),
             alpha_mode: AlphaMode::Blend,
@@ -253,7 +254,7 @@ pub fn ghost_placement_system(
                 gold: gold_mat.clone(),
                 red: red_mat.clone(),
             },
-            Mesh3d(meshes.add(Cuboid::new(w, h, d))),
+            Mesh3d(mesh_handle),
             MeshMaterial3d(gold_mat),
             Transform::default(),
             Visibility::Hidden,
