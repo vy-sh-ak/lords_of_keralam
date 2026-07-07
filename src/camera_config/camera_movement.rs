@@ -6,9 +6,7 @@ use bevy::{
 };
 use bevy_persistent::Persistent;
 
-use crate::{
-    ui_editor::UIKeyboardCapture,
-};
+use crate::ui_editor::UIKeyboardCapture;
 
 use super::CameraSettings;
 use super::DEFAULT_ORBIT_PITCH;
@@ -111,7 +109,8 @@ pub fn zoom(
         }
 
         let alpha = 1.0 - (-camera_settings.orbit_pitch_smoothness * time.delta_secs()).exp();
-        camera_settings.orbit_pitch += (camera_settings.target_orbit_pitch - camera_settings.orbit_pitch) * alpha;
+        camera_settings.orbit_pitch +=
+            (camera_settings.target_orbit_pitch - camera_settings.orbit_pitch) * alpha;
 
         let base_pitch = camera_settings.max_elevation
             + (camera_settings.min_elevation - camera_settings.max_elevation) * t;
@@ -119,9 +118,10 @@ pub fn zoom(
         (base_pitch + camera_settings.orbit_pitch).clamp(-0.2, camera_settings.max_elevation)
     } else {
         let alpha = 1.0 - (-camera_settings.orbit_pitch_smoothness * time.delta_secs()).exp();
-        camera_settings.orbit_pitch += (camera_settings.target_orbit_pitch - camera_settings.orbit_pitch) * alpha;
+        camera_settings.orbit_pitch +=
+            (camera_settings.target_orbit_pitch - camera_settings.orbit_pitch) * alpha;
 
-        (camera_settings.max_elevation - camera_settings.orbit_pitch)
+        (camera_settings.orbit_pitch + 0.6)
             .clamp(0.1, camera_settings.max_elevation)
     };
 
