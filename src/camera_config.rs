@@ -2,14 +2,15 @@
 pub mod camera_settings;
 pub mod camera_movement;
 pub mod camera_sync;
+pub mod world_direction;
 use bevy::{
     prelude::*,
 };
 use crate::{editor_config::{AutosaveAppExt, EditorStateAppExt}};
-use crate::world_direction::WorldDirection;
 pub use camera_settings::{CameraSettings, DEFAULT_ORBIT_PITCH};
 pub use camera_movement::{move_focus, rotate_horizontal, rotate_vertical, zoom};
 pub use camera_sync::{clamp_camera_to_grid, sync_world_direction};
+pub use world_direction::WorldDirection;
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CameraSystems {

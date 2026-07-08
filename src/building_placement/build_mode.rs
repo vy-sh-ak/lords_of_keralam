@@ -10,6 +10,7 @@ pub enum BuildingType {
 pub struct BuildingSize {
     pub tiles_x: u32,
     pub tiles_z: u32,
+    pub scale: f32,
 }
 
 impl Default for BuildingSize {
@@ -17,6 +18,7 @@ impl Default for BuildingSize {
         Self {
             tiles_x: 2,
             tiles_z: 2,
+            scale: 1.0,
         }
     }
 }

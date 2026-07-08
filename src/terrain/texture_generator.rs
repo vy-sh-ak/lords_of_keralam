@@ -5,19 +5,6 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-// pub fn texture_from_color_map(color_map: &[Vec<[u8; 4]>]) -> Image {
-//     let height = color_map.len() as u32;
-//     let width = color_map.first().map_or(0, |row| row.len()) as u32;
-//     let texture_data = Vec::with_capacity((width as usize) * (height as usize) * 4);
-//     draw_texture(texture_data, width, height)
-// }
-
-#[allow(dead_code)]
-pub fn white_texture(width: u32, height: u32) -> Image {
-    let texture_data = vec![255u8; (width as usize) * (height as usize) * 4];
-    draw_texture(texture_data, width, height)
-}
-
 pub fn texture_from_height_map(height_map: &[Vec<f32>]) -> Image {
     let height = height_map.len() as u32;
     let width = height_map.first().map_or(0, |row| row.len()) as u32;

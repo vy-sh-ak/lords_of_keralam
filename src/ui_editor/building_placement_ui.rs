@@ -19,4 +19,8 @@ pub fn render_build_mode_panel(world: &mut World, ui: &mut egui::Ui) {
         ui.label("Length (tiles):");
         ui.add(egui::Slider::new(&mut build_mode.building_size.tiles_z, 1..=10));
     });
+    ui.horizontal(|ui| {
+        ui.label("Scale:");
+        ui.add(egui::Slider::new(&mut build_mode.building_size.scale, 0.5..=3.0));
+    });
 }

@@ -163,7 +163,8 @@ pub fn ghost_placement_system(
                 commands.spawn((
                     Name::new("Building"),
                     SceneRoot(scene),
-                    Transform::from_xyz(snapped.x, height, snapped.z),
+                    Transform::from_xyz(snapped.x, height, snapped.z)
+                        .with_scale(Vec3::splat(build_mode.building_size.scale)),
                 ));
             }
             mark_occupied(
@@ -200,6 +201,7 @@ pub fn ghost_placement_system(
                 Vec3::new(snapped.x, 0.0, snapped.z),
             );
             transform.translation = Vec3::new(snapped.x, height, snapped.z);
+            transform.scale = Vec3::splat(build_mode.building_size.scale);
             let overlapping =
                 check_overlap(&*world_grid, snapped, &build_mode.building_size);
             if overlapping {
@@ -256,7 +258,7 @@ pub fn ghost_placement_system(
             },
             Mesh3d(mesh_handle),
             MeshMaterial3d(gold_mat),
-            Transform::default(),
+            Transform::from_scale(Vec3::splat(s.scale)),
             Visibility::Hidden,
         ));
     }

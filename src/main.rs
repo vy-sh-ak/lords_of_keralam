@@ -22,7 +22,6 @@ mod persistence;
 mod terrain;
 mod terrain_painter;
 mod ui_editor;
-mod world_direction;
 mod editor_config;
 mod world_grid_config;
 mod building_placement;
@@ -53,8 +52,7 @@ fn main() {
             default_color: Color::BLACK.into(),
         })
         .add_plugins(camera_config::CameraPlugin)
-        .add_plugins(terrain::MapGenerator::default().plugin())
-        .add_plugins(terrain::EndlessTerrainPlugin)
+        .add_plugins(terrain::TerrainPlugin)
         .add_plugins(terrain_painter::TerrainPainterPlugin)
         .add_plugins(map_asset::MapAssetPlugin)
         .add_plugins(world_grid_config::GridGeneratorPlugin)

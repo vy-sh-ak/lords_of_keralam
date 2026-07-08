@@ -1,27 +1,22 @@
 use std::collections::{HashMap, HashSet};
 
-use bevy::{
-    pbr::wireframe::{Wireframe, WireframeColor}, prelude::*
-};
+use bevy::prelude::*;
 use bevy_persistent::Persistent;
 
 use crate::{
-    camera_config::{CameraSettings, CameraSystems},
+    camera_config::CameraSettings,
     terrain::{
-        MapGenerator, TerrainSampler, generate_map_data,
+        MapGenerator, TerrainSampler,
         terrain_material::{TerrainMaterial, build_terrain_material},
     },
     terrain_painter::SculptMap,
 };
 
 use super::{
-    DrawMode, EndlessTerrainLodBand, MeshGenerator, chunk_span,
+    DrawMode, EndlessTerrainLodBand, MeshGenerator, chunk_span, generate_map_data, wireframe,
 };
 
-pub struct EndlessTerrainPlugin;
-
 const CHUNK_BUILD_BUDGET_PER_FRAME: usize = 2;
-const ENDLESS_TERRAIN_WIREFRAME_COLOR: Color = Color::srgb(0.5, 0.5, 0.5);
 const MIN_VISIBLE_CHUNK_MARGIN: f32 = 1.5;
 
 #[derive(Component)]
@@ -61,20 +56,7 @@ impl EndlessTerrainState {
     }
 }
 
-impl Plugin for EndlessTerrainPlugin {
-    fn build(&self, app: &mut App) {
-        app.insert_resource(EndlessTerrainState::default())
-            .add_systems(
-                Update,
-                (
-                    sync_endless_terrain.after(CameraSystems::UpdateState),
-                    update_focus_height,
-                ),
-            );
-    }
-}
-
-fn update_focus_height(
+pub(crate) fn update_focus_height(
     terrain_sampler: Res<TerrainSampler>,
     map_generator: Res<Persistent<MapGenerator>>,
     mut camera_settings: ResMut<Persistent<CameraSettings>>,
@@ -228,7 +210,7 @@ pub(crate) fn sync_endless_terrain(
             }
 
             let mut entity_commands = commands.entity(entity);
-            apply_wireframe_debug(&mut entity_commands, map_generator.show_uv_wireframe);
+            wireframe::apply_wireframe_debug(&mut entity_commands, map_generator.show_uv_wireframe);
         } else {
             if remaining_build_budget == 0 {
                 continue;
@@ -251,7 +233,7 @@ pub(crate) fn sync_endless_terrain(
                     coord.y as f32 * chunk_span,
                 ),
             ));
-            apply_wireframe_debug(&mut entity_commands, map_generator.show_uv_wireframe);
+            wireframe::apply_wireframe_debug(&mut entity_commands, map_generator.show_uv_wireframe);
             let entity = entity_commands.id();
             state.active_chunks.insert(coord, entity);
             remaining_build_budget -= 1;
@@ -371,18 +353,4 @@ fn visible_radius_from_camera(camera_position: Vec3, focus: Vec3, chunk_span: f3
     let view_radius = focus_distance * 2.0 / sin_pitch;
 
     view_radius.max(chunk_span * MIN_VISIBLE_CHUNK_MARGIN)
-}
-
-fn apply_wireframe_debug(entity_commands: &mut EntityCommands, show_wireframe: bool) {
-    if show_wireframe {
-        entity_commands.insert((
-            Wireframe,
-            WireframeColor {
-                color: ENDLESS_TERRAIN_WIREFRAME_COLOR.into(),
-            },
-        ));
-    } else {
-        entity_commands.remove::<Wireframe>();
-        entity_commands.remove::<WireframeColor>();
-    }
 }

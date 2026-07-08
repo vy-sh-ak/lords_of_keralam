@@ -1,6 +1,6 @@
 use bevy::{prelude::*, ui::{widget::ImageNode, UiTransform}};
 
-use crate::world_direction::WorldDirection;
+use crate::camera_config::WorldDirection;
 
 #[derive(Component)]
 pub struct CompassMarker;

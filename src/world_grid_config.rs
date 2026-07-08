@@ -70,9 +70,9 @@ impl Default for WorldGridConfig {
 }
 
 impl WorldGrid {
-    pub fn is_valid(&self, pos: TilePos) -> bool {
-        pos.x >= 0 && pos.x < GRID_SIZE as i32 && pos.y >= 0 && pos.y < GRID_SIZE as i32
-    }
+    // pub fn is_valid(&self, pos: TilePos) -> bool {
+    //     pos.x >= 0 && pos.x < GRID_SIZE as i32 && pos.y >= 0 && pos.y < GRID_SIZE as i32
+    // }
 
     pub fn ensure_tile(
         &mut self,
@@ -111,9 +111,9 @@ impl WorldGrid {
         })
     }
 
-    pub fn get_tile(&self, pos: TilePos) -> Option<&Tile> {
-        self.tiles.get(&pos)
-    }
+    // pub fn get_tile(&self, pos: TilePos) -> Option<&Tile> {
+    //     self.tiles.get(&pos)
+    // }
 }
 
 pub struct GridGeneratorPlugin;

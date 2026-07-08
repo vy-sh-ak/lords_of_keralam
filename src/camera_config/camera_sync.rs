@@ -3,7 +3,7 @@ use bevy::{
 };
 use bevy_persistent::Persistent;
 
-use crate::world_direction::WorldDirection;
+use super::world_direction::WorldDirection;
 use crate::{
     world_grid_config::{GRID_SIZE, TILE_SIZE},
 };
